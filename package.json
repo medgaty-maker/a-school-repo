@@ -1,0 +1,33 @@
+{
+  "name": "marketing-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "//": "════════ ОСНОВНЫЕ КОМАНДЫ ════════",
+    "start":        "bash scripts/start.sh",
+    "stop":         "bash scripts/stop.sh",
+    "status":       "bash scripts/status.sh",
+
+    "// dev":       "──── разработка ────",
+    "dev":          "concurrently -n backend,frontend -c blue,green \"npm run dev -w @dashboard/backend\" \"npm run dev -w @dashboard/frontend\"",
+
+    "// db":        "──── база данных ────",
+    "db:migrate":   "npm --workspace @dashboard/backend run prisma:migrate",
+    "db:seed":      "npm --workspace @dashboard/backend run prisma:seed",
+    "db:studio":    "npm --workspace @dashboard/backend run prisma:studio",
+    "db:reset":     "bash scripts/reset-db.sh",
+
+    "// infra":     "──── PostgreSQL и Redis (Homebrew) ────",
+    "infra:up":     "brew services start postgresql@16 && brew services start redis",
+    "infra:down":   "brew services stop postgresql@16 && brew services stop redis",
+
+    "// build":     "──── сборка ────",
+    "build":        "npm run build -w @dashboard/backend && npm run build -w @dashboard/frontend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}

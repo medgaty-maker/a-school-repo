@@ -1,0 +1,260 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --- Roles & Users (ТЗ §16) ---
+enum Role {
+  DIRECTOR
+  MARKETING_DIRECTOR
+  SMM
+  TARGETOLOG
+  SALES
+  ADMIN
+}
+
+model User {
+  id            String           @id @default(cuid())
+  email         String           @unique
+  passwordHash  String
+  name          String
+  role          Role             @default(SMM)
+  isActive      Boolean          @default(true)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  sessions      RefreshSession[]
+  auditLogs     AuditLog[]
+  videoNotes    VideoNote[]
+}
+
+model RefreshSession {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String   @unique
+  userAgent  String?
+  ip         String?
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  revokedAt  DateTime?
+
+  @@index([userId])
+}
+
+// --- Projects (ТЗ §4) ---
+enum ProjectPriority {
+  BRAND
+  SALES
+  BOTH
+}
+
+enum Platform {
+  YOUTUBE
+  INSTAGRAM
+  FACEBOOK
+  TIKTOK
+}
+
+enum IntegrationStatus {
+  NOT_CONNECTED
+  ACTIVE
+  EXPIRED
+  ERROR
+}
+
+model Project {
+  id          String            @id @default(cuid())
+  slug        String            @unique
+  name        String
+  description String?
+  priority    ProjectPriority   @default(BRAND)
+  isActive    Boolean           @default(true)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  platforms   ProjectPlatform[]
+  utmLinks    UtmLink[]
+}
+
+model ProjectPlatform {
+  id                String            @id @default(cuid())
+  projectId         String
+  project           Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  platform          Platform
+  externalAccountId String?           // YouTube channelId, Instagram IG user id, etc.
+  externalAccountName String?
+  // Encrypted via ENCRYPTION_KEY (AES-256-GCM)
+  accessTokenEnc    String?
+  refreshTokenEnc   String?
+  // Per-platform OAuth client (опционально). Если пусто — fallback на глобальный в env.
+  oauthClientIdEnc     String?
+  oauthClientSecretEnc String?
+  tokenExpiresAt    DateTime?
+  status            IntegrationStatus @default(NOT_CONNECTED)
+  lastSyncAt        DateTime?
+  lastError         String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  snapshots         Snapshot[]
+
+  @@unique([projectId, platform])
+  @@index([status])
+}
+
+// --- Snapshots: исторические метрики (ТЗ §3.3) ---
+model Snapshot {
+  id                String          @id @default(cuid())
+  projectPlatformId String
+  projectPlatform   ProjectPlatform @relation(fields: [projectPlatformId], references: [id], onDelete: Cascade)
+  // Ключ метрики: views, reach, subscribers, watch_time_minutes, leads, ad_spend, cpl, cpm, ctr, etc.
+  metricKey         String
+  metricValue       Decimal         @db.Decimal(20, 4)
+  // Период, к которому относится метрика (для агрегаций day/week/month)
+  periodStart       DateTime
+  periodEnd         DateTime
+  capturedAt        DateTime        @default(now())
+  // Доп. контекст (например, videoId для метрики per-video)
+  meta              Json?
+
+  @@index([projectPlatformId, metricKey, periodStart])
+  @@index([capturedAt])
+}
+
+// --- Audit log (ТЗ §16) ---
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String   // login, logout, create_user, oauth_connect, etc.
+  entity    String?  // user, project, platform
+  entityId  String?
+  ip        String?
+  userAgent String?
+  details   Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+}
+
+// --- Integration sync log (ТЗ §3.2) ---
+enum IntegrationCallStatus {
+  SUCCESS
+  ERROR
+  RATE_LIMITED
+}
+
+// --- Заметки к публикациям (ТЗ §7.3) ---
+model VideoNote {
+  id                String   @id @default(cuid())
+  // Платформо-агностично: videoId — это external id (YouTube videoId, IG mediaId и т.д.)
+  videoId           String
+  projectPlatformId String
+  authorId          String?
+  author            User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  body              String   @db.Text
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([videoId])
+  @@index([projectPlatformId, createdAt])
+}
+
+// --- UTM-конструктор (ТЗ §14.5) ---
+model UtmLink {
+  id          String   @id @default(cuid())
+  label       String   // человекочитаемое название
+  baseUrl     String
+  source      String   // instagram, youtube, facebook, tiktok, telegram, whatsapp, email, direct
+  medium      String   // organic, cpc, social, email, referral, video, banner
+  campaign    String
+  content     String?
+  term        String?
+  generatedUrl String  // готовый URL — кэшируем чтобы не пересчитывать
+  projectId   String?
+  project     Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@index([source, medium, campaign])
+  @@index([createdAt])
+}
+
+model IntegrationLog {
+  id                String                @id @default(cuid())
+  source            String                // youtube, instagram, facebook, meta_ads, bitrix24, ga4, whatsapp
+  operation         String                // sync, oauth_callback, fetch_videos, etc.
+  status            IntegrationCallStatus
+  durationMs        Int?
+  responseSize      Int?
+  errorMessage      String?
+  projectPlatformId String?
+  createdAt         DateTime              @default(now())
+
+  @@index([source, createdAt])
+  @@index([status])
+}
+
+// --- Bitrix24 CRM (ТЗ §9) ---
+
+model BitrixConfig {
+  id            String    @id @default(cuid())
+  webhookUrlEnc String    // encrypted Bitrix24 incoming webhook URL
+  lastSyncAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model BitrixDeal {
+  id           String   @id @default(cuid())
+  bitrixId     Int      @unique
+  title        String
+  stageId      String   // STAGE_ID: e.g. NEW, C1:NEW, C1:WON
+  stageName    String?
+  categoryId   String?  // pipeline/funnel id
+  sourceId     String?  // SOURCE_ID from Bitrix: WEB, CALL, EMAIL, etc.
+  utmSource    String?
+  utmMedium    String?
+  utmCampaign  String?
+  utmContent   String?
+  assignedById String?
+  opportunity  Decimal? @db.Decimal(20, 2)
+  currencyId   String?
+  isWon        Boolean  @default(false)
+  isLost       Boolean  @default(false)
+  dateCreate   DateTime
+  dateModify   DateTime
+  closeDate    DateTime?
+  syncedAt     DateTime @default(now())
+
+  @@index([stageId])
+  @@index([dateCreate])
+  @@index([utmSource, utmCampaign])
+  @@index([isWon, isLost])
+}
+
+// --- Meta Ads (ТЗ §8 / §15.2) ---
+
+model MetaConfig {
+  id             String    @id @default(cuid())
+  accessTokenEnc String    // encrypted System User Access Token
+  adAccountId    String    // act_XXXXXXXXX
+  appId          String?   // Facebook App ID (optional)
+  lastSyncAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+// --- Yandex Metrica (ТЗ §6 / item 6) ---
+
+model YandexMetricaConfig {
+  id             String    @id @default(cuid())
+  accessTokenEnc String    // encrypted OAuth token
+  counterIds     String    // comma-separated counter IDs e.g. "105849697,106777545"
+  lastSyncAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}

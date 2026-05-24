@@ -1,0 +1,658 @@
+{
+  "info": {
+    "name": "Malenia API",
+    "description": "Маркетинговый дашборд Malenia — полная коллекция API эндпоинтов.\n\nБазовый URL: {{base_url}}\n\nАутентификация: Bearer токен в переменной {{access_token}}.\nПолучить токен: POST /api/auth/login → скопировать accessToken → вставить в переменную коллекции.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:4000/api", "type": "string" },
+    { "key": "access_token", "value": "", "type": "string" },
+    { "key": "project_slug", "value": "parent-club", "type": "string" },
+    { "key": "project_platform_id", "value": "", "type": "string" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "🔐 Auth",
+      "description": "Аутентификация и управление сессией",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.accessToken) {",
+                  "  pm.collectionVariables.set('access_token', json.accessToken);",
+                  "  console.log('Token saved:', json.accessToken.substring(0, 20) + '...');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@a-school.kz\",\n  \"password\": \"changeme123\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/auth/login", "host": ["{{base_url}}"], "path": ["auth", "login"] },
+            "description": "Вход по email + пароль. Токен автоматически сохраняется в переменную {{access_token}}."
+          }
+        },
+        {
+          "name": "Refresh Token",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": { "raw": "{{base_url}}/auth/refresh", "host": ["{{base_url}}"], "path": ["auth", "refresh"] },
+            "description": "Обновить access токен через refresh токен (из cookie)."
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/auth/logout", "host": ["{{base_url}}"], "path": ["auth", "logout"] },
+            "description": "Завершить сессию, очистить refresh токен."
+          }
+        }
+      ]
+    },
+    {
+      "name": "👤 Users",
+      "description": "Управление пользователями и профилем",
+      "item": [
+        {
+          "name": "Get My Profile",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/users/me", "host": ["{{base_url}}"], "path": ["users", "me"] },
+            "description": "Профиль текущего авторизованного пользователя."
+          }
+        },
+        {
+          "name": "Update My Profile",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Новое имя\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/users/me", "host": ["{{base_url}}"], "path": ["users", "me"] }
+          }
+        },
+        {
+          "name": "List All Users",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/users", "host": ["{{base_url}}"], "path": ["users"] },
+            "description": "Только ADMIN. Список всех пользователей."
+          }
+        },
+        {
+          "name": "Create User",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"name\": \"Имя\",\n  \"password\": \"password123\",\n  \"role\": \"ANALYST\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/users", "host": ["{{base_url}}"], "path": ["users"] },
+            "description": "Только ADMIN. Роли: ADMIN, MARKETING_DIRECTOR, SMM_MANAGER, ANALYST, CONTENT_MANAGER, VIEWER."
+          }
+        },
+        {
+          "name": "Update User",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"SMM_MANAGER\",\n  \"isActive\": true\n}"
+            },
+            "url": { "raw": "{{base_url}}/users/:id", "host": ["{{base_url}}"], "path": ["users", ":id"], "variable": [{ "key": "id", "value": "" }] },
+            "description": "Только ADMIN."
+          }
+        },
+        {
+          "name": "Delete User",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{base_url}}/users/:id", "host": ["{{base_url}}"], "path": ["users", ":id"], "variable": [{ "key": "id", "value": "" }] },
+            "description": "Только ADMIN."
+          }
+        }
+      ]
+    },
+    {
+      "name": "📁 Projects",
+      "description": "Проекты и их метрики",
+      "item": [
+        {
+          "name": "List Projects",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/projects", "host": ["{{base_url}}"], "path": ["projects"] },
+            "description": "Все 6 проектов с их платформами и статусами подключений."
+          }
+        },
+        {
+          "name": "Get Project",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/projects/{{project_slug}}",
+              "host": ["{{base_url}}"],
+              "path": ["projects", "{{project_slug}}"]
+            },
+            "description": "Слаги: parent-club, a-school, millimone, ayaru-show, teachers, miss-mari"
+          }
+        },
+        {
+          "name": "Get Project Metrics",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/projects/{{project_slug}}/metrics?period=30d",
+              "host": ["{{base_url}}"],
+              "path": ["projects", "{{project_slug}}", "metrics"],
+              "query": [
+                { "key": "period", "value": "30d", "description": "7d, 14d, 30d, 90d" },
+                { "key": "days", "value": "", "disable": true }
+              ]
+            },
+            "description": "Снапшоты метрик проекта по всем подключённым платформам."
+          }
+        },
+        {
+          "name": "Update Project",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Новое название\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/projects/:id", "host": ["{{base_url}}"], "path": ["projects", ":id"], "variable": [{ "key": "id", "value": "" }] },
+            "description": "ADMIN или MARKETING_DIRECTOR."
+          }
+        }
+      ]
+    },
+    {
+      "name": "▶️ YouTube",
+      "description": "YouTube Data API + Analytics — каналы, видео, метрики",
+      "item": [
+        {
+          "name": "Top Videos (all channels)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/integrations/youtube/top-videos?limit=10&sort=desc",
+              "host": ["{{base_url}}"],
+              "path": ["integrations", "youtube", "top-videos"],
+              "query": [
+                { "key": "limit", "value": "10" },
+                { "key": "sort", "value": "desc", "description": "desc = топ, asc = антирейтинг" }
+              ]
+            },
+            "description": "Топ/антирейтинг видео по всем активным YouTube каналам."
+          }
+        },
+        {
+          "name": "Aggregate Daily Views",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/integrations/youtube/aggregate-daily", "host": ["{{base_url}}"], "path": ["integrations", "youtube", "aggregate-daily"] },
+            "description": "Суммарные просмотры по дням по всем каналам (для тепловой карты)."
+          }
+        },
+        {
+          "name": "Get Channel Info",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/integrations/youtube/{{project_platform_id}}/channel",
+              "host": ["{{base_url}}"],
+              "path": ["integrations", "youtube", "{{project_platform_id}}", "channel"]
+            },
+            "description": "Название, подписчики, просмотры, кол-во видео."
+          }
+        },
+        {
+          "name": "Get Recent Videos",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/integrations/youtube/{{project_platform_id}}/videos?limit=10",
+              "host": ["{{base_url}}"],
+              "path": ["integrations", "youtube", "{{project_platform_id}}", "videos"],
+              "query": [{ "key": "limit", "value": "10" }]
+            }
+          }
+        },
+        {
+          "name": "Get Channel Detail (Analytics)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/integrations/youtube/{{project_platform_id}}/detail",
+              "host": ["{{base_url}}"],
+              "path": ["integrations", "youtube", "{{project_platform_id}}", "detail"]
+            },
+            "description": "Полная аналитика: дневные просмотры, источники трафика, демография, страны, устройства."
+          }
+        },
+        {
+          "name": "Start OAuth",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/integrations/youtube/oauth/start/{{project_platform_id}}?bearer={{access_token}}",
+              "host": ["{{base_url}}"],
+              "path": ["integrations", "youtube", "oauth", "start", "{{project_platform_id}}"],
+              "query": [{ "key": "bearer", "value": "{{access_token}}" }]
+            },
+            "description": "Редирект на Google OAuth. Открывать в браузере, не в Postman."
+          }
+        },
+        {
+          "name": "Disconnect YouTube",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{base_url}}/integrations/youtube/oauth/{{project_platform_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["integrations", "youtube", "oauth", "{{project_platform_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "📸 Instagram",
+      "description": "Instagram Business API — профиль, инсайты, OAuth",
+      "item": [
+        {
+          "name": "Get Instagram Profile",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/integrations/meta/instagram/{{project_platform_id}}/profile",
+              "host": ["{{base_url}}"],
+              "path": ["integrations", "meta", "instagram", "{{project_platform_id}}", "profile"]
+            },
+            "description": "Username, подписчики, кол-во постов, биография."
+          }
+        },
+        {
+          "name": "Get Instagram Insights",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/integrations/meta/instagram/{{project_platform_id}}/insights",
+              "host": ["{{base_url}}"],
+              "path": ["integrations", "meta", "instagram", "{{project_platform_id}}", "insights"]
+            },
+            "description": "Reach, impressions, profile views за 28 дней."
+          }
+        },
+        {
+          "name": "Start Instagram OAuth",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/integrations/meta/instagram/oauth/start/{{project_platform_id}}?bearer={{access_token}}",
+              "host": ["{{base_url}}"],
+              "path": ["integrations", "meta", "instagram", "oauth", "start", "{{project_platform_id}}"],
+              "query": [{ "key": "bearer", "value": "{{access_token}}" }]
+            },
+            "description": "Редирект на Instagram Business Login. Открывать в браузере."
+          }
+        },
+        {
+          "name": "Disconnect Instagram",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{base_url}}/integrations/meta/instagram/oauth/{{project_platform_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["integrations", "meta", "instagram", "oauth", "{{project_platform_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "📢 Meta Ads",
+      "description": "Meta Marketing API — рекламные кампании, расход, CPL, ROAS",
+      "item": [
+        {
+          "name": "Get Meta Status",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/integrations/meta/status", "host": ["{{base_url}}"], "path": ["integrations", "meta", "status"] },
+            "description": "Настроен ли Meta Ads, adAccountId, время последнего синка."
+          }
+        },
+        {
+          "name": "Set Meta Config",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accessToken\": \"EAAxxxxxx\",\n  \"adAccountId\": \"123456789\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/integrations/meta/config", "host": ["{{base_url}}"], "path": ["integrations", "meta", "config"] },
+            "description": "System User Access Token + ID рекламного кабинета."
+          }
+        },
+        {
+          "name": "Test Meta Connection",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/integrations/meta/test", "host": ["{{base_url}}"], "path": ["integrations", "meta", "test"] },
+            "description": "Проверить валидность System User Token."
+          }
+        },
+        {
+          "name": "Get Ads Insights",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/integrations/meta/ads/insights?datePreset=last_28d",
+              "host": ["{{base_url}}"],
+              "path": ["integrations", "meta", "ads", "insights"],
+              "query": [{ "key": "datePreset", "value": "last_28d", "description": "last_7d, last_14d, last_28d, last_30d, last_90d, this_month, last_month" }]
+            },
+            "description": "Суммарные KPI: расход, CTR, CPC, CPL, ROAS, охват, лиды."
+          }
+        },
+        {
+          "name": "Get Campaigns",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/integrations/meta/ads/campaigns?datePreset=last_28d",
+              "host": ["{{base_url}}"],
+              "path": ["integrations", "meta", "ads", "campaigns"],
+              "query": [{ "key": "datePreset", "value": "last_28d" }]
+            },
+            "description": "Список кампаний с инсайтами за период."
+          }
+        },
+        {
+          "name": "Delete Meta Config",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{base_url}}/integrations/meta/config", "host": ["{{base_url}}"], "path": ["integrations", "meta", "config"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "🏢 Bitrix24",
+      "description": "CRM Bitrix24 — сделки, воронка, источники",
+      "item": [
+        {
+          "name": "Get Bitrix Status",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/bitrix/status", "host": ["{{base_url}}"], "path": ["bitrix", "status"] },
+            "description": "Настроен ли вебхук, время синка, кол-во сделок."
+          }
+        },
+        {
+          "name": "Set Webhook URL",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://a-school.bitrix24.kz/rest/1/xxxxxxxx/\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/bitrix/config", "host": ["{{base_url}}"], "path": ["bitrix", "config"] }
+          }
+        },
+        {
+          "name": "Run Sync",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/bitrix/sync", "host": ["{{base_url}}"], "path": ["bitrix", "sync"] },
+            "description": "Запустить ручную синхронизацию сделок."
+          }
+        },
+        {
+          "name": "Get Funnel",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/bitrix/funnel?days=30",
+              "host": ["{{base_url}}"],
+              "path": ["bitrix", "funnel"],
+              "query": [{ "key": "days", "value": "30" }]
+            },
+            "description": "Воронка по стадиям + сводка (total, won, conversion rate)."
+          }
+        },
+        {
+          "name": "Get Sources",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/bitrix/sources?days=30",
+              "host": ["{{base_url}}"],
+              "path": ["bitrix", "sources"],
+              "query": [{ "key": "days", "value": "30" }]
+            },
+            "description": "Источники лидов по UTM, конверсия по каждому источнику."
+          }
+        },
+        {
+          "name": "Get Deals",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/bitrix/deals?days=30&limit=50",
+              "host": ["{{base_url}}"],
+              "path": ["bitrix", "deals"],
+              "query": [
+                { "key": "days", "value": "30" },
+                { "key": "limit", "value": "50" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "📊 Snapshots / ETL",
+      "description": "Снапшоты метрик — ручной запуск и просмотр",
+      "item": [
+        {
+          "name": "Run All Snapshots",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/snapshots/run", "host": ["{{base_url}}"], "path": ["snapshots", "run"] },
+            "description": "Принудительно запустить ETL по всем активным платформам."
+          }
+        },
+        {
+          "name": "List Snapshots",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/snapshots?limit=50",
+              "host": ["{{base_url}}"],
+              "path": ["snapshots"],
+              "query": [
+                { "key": "projectPlatformId", "value": "", "disabled": true },
+                { "key": "metricKey", "value": "", "disabled": true },
+                { "key": "limit", "value": "50" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "💡 Insights & Alerts",
+      "description": "Автоматические инсайты и алерты по метрикам",
+      "item": [
+        {
+          "name": "Get Insights",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/insights", "host": ["{{base_url}}"], "path": ["insights"] },
+            "description": "Список алертов и инсайтов (просадки, аномалии, устаревшие данные)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "🔗 UTM-трекер",
+      "description": "Конструктор и хранилище UTM-ссылок",
+      "item": [
+        {
+          "name": "Get UTM Rules",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/utm/rules", "host": ["{{base_url}}"], "path": ["utm", "rules"] },
+            "description": "Допустимые источники, медиумы, шаблоны токенов."
+          }
+        },
+        {
+          "name": "List UTM Links",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/utm?limit=50",
+              "host": ["{{base_url}}"],
+              "path": ["utm"],
+              "query": [
+                { "key": "projectId", "value": "", "disabled": true },
+                { "key": "limit", "value": "50" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Preview UTM URL",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"baseUrl\": \"https://a-school.kz\",\n  \"source\": \"instagram\",\n  \"medium\": \"social\",\n  \"campaign\": \"nabor_2026\",\n  \"content\": \"stories\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/utm/preview", "host": ["{{base_url}}"], "path": ["utm", "preview"] }
+          }
+        },
+        {
+          "name": "Create UTM Link",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectId\": \"\",\n  \"baseUrl\": \"https://a-school.kz\",\n  \"source\": \"instagram\",\n  \"medium\": \"social\",\n  \"campaign\": \"nabor_2026\",\n  \"content\": \"stories\",\n  \"label\": \"Набор 2026 — сторис\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/utm", "host": ["{{base_url}}"], "path": ["utm"] }
+          }
+        },
+        {
+          "name": "Delete UTM Link",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{base_url}}/utm/:id", "host": ["{{base_url}}"], "path": ["utm", ":id"], "variable": [{ "key": "id", "value": "" }] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "📝 Video Notes",
+      "description": "Заметки к видео (для SMM-менеджеров)",
+      "item": [
+        {
+          "name": "List Notes",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/notes?videoId=",
+              "host": ["{{base_url}}"],
+              "path": ["notes"],
+              "query": [{ "key": "videoId", "value": "" }]
+            }
+          }
+        },
+        {
+          "name": "Create Note",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"videoId\": \"dQw4w9WgXcQ\",\n  \"projectPlatformId\": \"\",\n  \"text\": \"Текст заметки\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/notes", "host": ["{{base_url}}"], "path": ["notes"] }
+          }
+        },
+        {
+          "name": "Update Note",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Обновлённый текст\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/notes/:id", "host": ["{{base_url}}"], "path": ["notes", ":id"], "variable": [{ "key": "id", "value": "" }] }
+          }
+        },
+        {
+          "name": "Delete Note",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{base_url}}/notes/:id", "host": ["{{base_url}}"], "path": ["notes", ":id"], "variable": [{ "key": "id", "value": "" }] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "📋 Audit Log",
+      "description": "Журнал действий пользователей (только ADMIN)",
+      "item": [
+        {
+          "name": "Get Audit Log",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/audit-log?limit=50",
+              "host": ["{{base_url}}"],
+              "path": ["audit-log"],
+              "query": [
+                { "key": "userId", "value": "", "disabled": true },
+                { "key": "limit", "value": "50" }
+              ]
+            },
+            "description": "Только ADMIN. Все действия: login, oauth_connect, create_user и т.д."
+          }
+        }
+      ]
+    }
+  ]
+}
