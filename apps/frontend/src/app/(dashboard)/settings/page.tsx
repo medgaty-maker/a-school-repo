@@ -3,7 +3,7 @@
 import { useEffect, useState, FormEvent } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { apiFetch } from '@/lib/api-client';
-import { Plug, CheckCircle2, AlertCircle, XCircle, ChevronRight, RefreshCw, ExternalLink, Unplug, Megaphone, Instagram, BarChart2 } from 'lucide-react';
+import { Plug, CheckCircle2, AlertCircle, XCircle, ChevronRight, RefreshCw, ExternalLink, Unplug, Megaphone, Instagram, BarChart2, Music2 } from 'lucide-react';
 
 type Project = {
   id: string;
@@ -29,6 +29,7 @@ type SyncResult = { total: number; success: number; failed: number };
 type BitrixStatus = { configured: boolean; lastSyncAt: string | null; totalDeals: number };
 type MetaStatus = { configured: boolean; adAccountId: string | null; lastSyncAt: string | null };
 type MetricaStatus = { id: string; counterIds: string; lastSyncAt: string | null } | null;
+type TikTokStatus = { id?: string; openId?: string; displayName?: string | null; tokenExpiresAt?: string | null; lastSyncAt?: string | null; authUrl: string };
 
 export default function SettingsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -58,6 +59,9 @@ export default function SettingsPage() {
   const [metricaSaving, setMetricaSaving] = useState(false);
   const [metricaMsg, setMetricaMsg] = useState<string | null>(null);
 
+  const [tiktok, setTiktok] = useState<TikTokStatus | null>(null);
+  const [tiktokMsg, setTiktokMsg] = useState<string | null>(null);
+
   const searchParams = useSearchParams();
 
   function refresh() {
@@ -67,6 +71,7 @@ export default function SettingsPage() {
     apiFetch<BitrixStatus>('/bitrix/status', { token }).then(setBitrix).catch(console.error);
     apiFetch<MetaStatus>('/integrations/meta/status', { token }).then(setMeta).catch(console.error);
     apiFetch<MetricaStatus>('/integrations/yandex-metrica/config', { token }).then(setMetrica).catch(console.error);
+    apiFetch<TikTokStatus>('/integrations/tiktok/config', { token }).then(setTiktok).catch(() => setTiktok(null));
   }
 
   useEffect(() => {
@@ -79,12 +84,19 @@ export default function SettingsPage() {
     const ytStatus = searchParams.get('youtube');
     const ytChannel = searchParams.get('channel');
 
+    const tiktokStatus = searchParams.get('tiktok');
+
     if (igStatus === 'ok' && igUsername) {
       setOauthMsg(`Instagram @${igUsername} успешно подключён!`);
     } else if (igStatus === 'error') {
       setOauthMsg(`Ошибка подключения Instagram: ${igError ?? 'неизвестная ошибка'}`);
     } else if (ytStatus === 'ok' && ytChannel) {
       setOauthMsg(`YouTube «${ytChannel}» успешно подключён!`);
+    } else if (tiktokStatus === 'connected') {
+      setTiktokMsg('TikTok успешно подключён!');
+      refresh();
+    } else if (tiktokStatus === 'error') {
+      setTiktokMsg('Ошибка подключения TikTok. Попробуйте снова.');
     }
   }, []);
 
@@ -179,6 +191,36 @@ export default function SettingsPage() {
       setMetricaMsg(`Ошибка: ${(e as Error).message}`);
     } finally {
       setMetricaSaving(false);
+    }
+  }
+
+  function connectTikTok() {
+    const clientKey = process.env.NEXT_PUBLIC_TIKTOK_CLIENT_KEY;
+    const redirectUri = process.env.NEXT_PUBLIC_TIKTOK_REDIRECT_URI;
+    if (!clientKey || !redirectUri) {
+      setTiktokMsg('TikTok не настроен. Обратитесь к администратору.');
+      return;
+    }
+    const params = new URLSearchParams({
+      client_key: clientKey,
+      response_type: 'code',
+      scope: 'user.info.basic,user.info.stats,video.list',
+      redirect_uri: redirectUri,
+      state: 'tiktok_oauth',
+    });
+    window.location.href = `https://www.tiktok.com/v2/auth/authorize/?${params.toString()}`;
+  }
+
+  async function disconnectTikTok() {
+    if (!confirm('Отключить TikTok?')) return;
+    const token = readCookie('access_token');
+    if (!token) return;
+    try {
+      await apiFetch('/integrations/tiktok/disconnect', { method: 'DELETE', token });
+      setTiktok(null);
+      setTiktokMsg(null);
+    } catch (e) {
+      alert(`Ошибка: ${(e as Error).message}`);
     }
   }
 
@@ -510,6 +552,56 @@ export default function SettingsPage() {
           {metricaMsg && (
             <p className={`text-sm ${metricaMsg.startsWith('Ошибка') ? 'text-danger' : 'text-success'}`}>
               {metricaMsg}
+            </p>
+          )}
+        </div>
+      </section>
+
+      {/* TikTok */}
+      <section className="border border-border rounded-xl bg-background overflow-hidden">
+        <div className="px-5 py-3 border-b border-border bg-muted/40 flex items-center gap-3">
+          <Music2 className="size-4 text-muted-foreground" />
+          <div className="font-semibold">TikTok — Parents Club</div>
+          {tiktok?.id ? (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-success/10 text-success">Подключён</span>
+          ) : (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">Не подключён</span>
+          )}
+          {tiktok?.lastSyncAt && (
+            <span className="text-xs text-muted-foreground ml-auto">
+              Последний синк: {new Date(tiktok.lastSyncAt!).toLocaleString('ru-RU')}
+            </span>
+          )}
+        </div>
+        <div className="p-5 space-y-3">
+          {tiktok?.id ? (
+            <div className="space-y-3">
+              <div className="text-sm">
+                Аккаунт: <span className="font-medium">{tiktok.displayName ?? tiktok.openId ?? '—'}</span>
+              </div>
+              <button
+                onClick={disconnectTikTok}
+                className="flex items-center gap-2 px-3 py-1.5 text-sm text-danger border border-danger/30 rounded-md hover:bg-danger/5"
+              >
+                <Unplug className="size-3.5" /> Отключить
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground">
+                Подключите TikTok аккаунт Parents Club через OAuth для просмотра статистики.
+              </p>
+              <button
+                onClick={connectTikTok}
+                className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm"
+              >
+                <Music2 className="size-4" /> Подключить TikTok
+              </button>
+            </div>
+          )}
+          {tiktokMsg && (
+            <p className={`text-sm ${tiktokMsg.startsWith('Ошибка') ? 'text-danger' : 'text-success'}`}>
+              {tiktokMsg}
             </p>
           )}
         </div>

@@ -4,15 +4,17 @@ import { Suspense } from 'react';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Eye, Users, Heart, Play } from 'lucide-react';
+import { ArrowLeft, Eye, Users, Heart, Play, Target, BookOpen, TrendingUp, Megaphone } from 'lucide-react';
+import {
+  LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip,
+  ResponsiveContainer, Legend,
+} from 'recharts';
 import { apiFetch } from '@/lib/api-client';
 import { KpiCard } from '@/components/kpi-card';
 import { PlatformCard } from '@/components/widgets/platform-card';
-import { TrendChart } from '@/components/widgets/trend-chart';
 import { DonutChart } from '@/components/widgets/donut-chart';
 import { DemographicsPyramid } from '@/components/widgets/demographics-pyramid';
 import { WeekdayHeatmap } from '@/components/widgets/weekday-heatmap';
-import { DailyViewsChart } from '@/components/widgets/daily-views-chart';
 import { CountriesList } from '@/components/widgets/countries-list';
 import { VideoDetailSheet } from '@/components/widgets/video-detail-sheet';
 import { formatNumber } from '@/lib/utils';
@@ -60,6 +62,10 @@ type YoutubeDetail = {
   operating_systems: Array<{ operatingSystem: string; views: number }>;
 };
 
+type AdInsights = { leads: number; spend: number };
+type LeadBreakdown = { total: number };
+type FunnelSummary = { won: number; inProgress: number };
+
 const PRIORITY_LABEL: Record<string, string> = {
   BRAND: 'Бренд',
   SALES: 'Продажи',
@@ -74,6 +80,59 @@ export default function ProjectDetailPage() {
   );
 }
 
+function MultiPlatformChart({
+  ytDaily,
+  igSeries,
+}: {
+  ytDaily: Array<{ day: string; views: number }>;
+  igSeries: Array<{ metricKey: string; value: number; capturedAt: string }>;
+}) {
+  const ytMap = new Map(ytDaily.map((d) => [d.day.slice(0, 10), d.views]));
+  const igMap = new Map(
+    igSeries
+      .filter((s) => s.metricKey === 'impressions')
+      .map((s) => [s.capturedAt.slice(0, 10), s.value]),
+  );
+
+  const allDays = [...new Set([...ytMap.keys(), ...igMap.keys()])].sort();
+
+  if (allDays.length === 0) {
+    return (
+      <div className="border border-border rounded-xl p-8 text-center text-sm text-muted-foreground bg-background">
+        Подключите YouTube или Instagram в «Настройках» для просмотра динамики.
+      </div>
+    );
+  }
+
+  const data = allDays.map((day) => ({
+    day: new Date(day).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' }),
+    YouTube: ytMap.get(day) ?? null,
+    Instagram: igMap.get(day) ?? null,
+  }));
+
+  return (
+    <div className="border border-border rounded-xl p-4 bg-background">
+      <ResponsiveContainer width="100%" height={220}>
+        <LineChart data={data} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+          <XAxis dataKey="day" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
+          <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(v) => v >= 1000 ? `${Math.round(v / 1000)}K` : v} />
+          <RechartsTooltip
+            contentStyle={{ fontSize: 12, borderRadius: 8 }}
+            formatter={(val: number, name: string) => [formatNumber(val), name]}
+          />
+          <Legend wrapperStyle={{ fontSize: 12 }} />
+          {ytMap.size > 0 && (
+            <Line type="monotone" dataKey="YouTube" stroke="#EF4444" strokeWidth={2} dot={false} connectNulls />
+          )}
+          {igMap.size > 0 && (
+            <Line type="monotone" dataKey="Instagram" stroke="#A855F7" strokeWidth={2} dot={false} connectNulls />
+          )}
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 function ProjectDetailContent() {
   const params = useParams<{ slug: string }>();
   const slug = params.slug;
@@ -83,6 +142,12 @@ function ProjectDetailContent() {
   const [error, setError] = useState<string | null>(null);
   const [openVideo, setOpenVideo] = useState<YoutubeVideo | null>(null);
   const [ytPpId, setYtPpId] = useState<string>('');
+
+  const [metaLeads, setMetaLeads] = useState<number>(0);
+  const [metricaLeads, setMetricaLeads] = useState<number>(0);
+  const [bitrixWon, setBitrixWon] = useState<number>(0);
+  const [bitrixActive, setBitrixActive] = useState<number>(0);
+
   const { period } = usePeriod();
   const periodLabel = PERIODS.find((p) => p.value === period)?.label ?? period;
 
@@ -115,6 +180,18 @@ function ProjectDetailContent() {
         }
       })
       .catch((e) => setError((e as Error).message));
+
+    // KPI data: leads + Bitrix
+    Promise.all([
+      apiFetch<AdInsights>('/integrations/meta/ads/insights?datePreset=last_28d', { token }).catch(() => null),
+      apiFetch<LeadBreakdown>('/integrations/yandex-metrica/leads?datePreset=last_28d', { token }).catch(() => null),
+      apiFetch<{ summary: FunnelSummary }>('/bitrix/funnel?days=90', { token }).catch(() => null),
+    ]).then(([meta, metrica, bitrix]) => {
+      setMetaLeads(meta?.leads ?? 0);
+      setMetricaLeads(metrica?.total ?? 0);
+      setBitrixWon(bitrix?.summary?.won ?? 0);
+      setBitrixActive(bitrix?.summary?.inProgress ?? 0);
+    });
   }, [slug, period]);
 
   if (error) {
@@ -125,14 +202,20 @@ function ProjectDetailContent() {
   }
 
   const yt = data.platforms.YOUTUBE;
-  const totalSubs = yt?.metrics?.subscribers_total ?? 0;
-  const total28dViews = yt?.metrics?.views_28d ?? 0;
+  const ig = data.platforms.INSTAGRAM;
+
+  const totalViews = (yt?.metrics?.views_28d ?? 0) + (ig?.metrics?.impressions ?? 0);
+  const totalSubs = (yt?.metrics?.subscribers_total ?? 0) + (ig?.metrics?.followers ?? 0);
+  const totalInteractions =
+    (yt?.metrics?.likes_28d ?? 0) + (yt?.metrics?.comments_28d ?? 0) +
+    (ig?.metrics?.likes ?? 0) + (ig?.metrics?.comments ?? 0);
+  const totalLeads = metaLeads + metricaLeads;
   const totalVideos = yt?.metrics?.videos_total ?? 0;
   const avgRetention = yt?.metrics?.avg_view_percentage_28d ?? 0;
 
   return (
     <div className="p-6 space-y-6">
-      {/* §7.1 Шапка проекта */}
+      {/* Шапка */}
       <header className="space-y-2">
         <Link
           href="/projects"
@@ -151,63 +234,87 @@ function ProjectDetailContent() {
         </div>
       </header>
 
-      {/* KPI плитки проекта */}
-      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard
-          label="Подписчики (YouTube)"
-          value={totalSubs || null}
-          pending={!yt || yt.status !== 'ACTIVE'}
-          pendingNote="Подключите YouTube в «Настройках»"
-          icon={<Users className="size-4" />}
-        />
-        <KpiCard
-          label="Просмотры за 28 дней"
-          value={total28dViews || null}
-          pending={!yt || yt.status !== 'ACTIVE'}
-          pendingNote="Подключите YouTube в «Настройках»"
-          icon={<Eye className="size-4" />}
-        />
-        <KpiCard
-          label="Видео всего"
-          value={totalVideos || null}
-          pending={!yt || yt.status !== 'ACTIVE'}
-          pendingNote="Подключите YouTube"
-          icon={<Play className="size-4" />}
-        />
-        <KpiCard
-          label="Среднее удержание"
-          value={avgRetention ? `${avgRetention.toFixed(1)}%` : null}
-          pending={!yt || yt.status !== 'ACTIVE'}
-          pendingNote="Подключите YouTube"
-          icon={<Heart className="size-4" />}
-        />
-      </section>
-
-      {/* §7.2 Карточки 4 платформ */}
+      {/* Суммарные KPI по всем платформам */}
       <section>
-        <h2 className="text-lg font-semibold mb-3">По платформам</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {(['YOUTUBE', 'INSTAGRAM', 'FACEBOOK', 'TIKTOK'] as const).map((p) => (
-            <PlatformCard key={p} platform={p} data={data.platforms[p] as any} />
-          ))}
+        <h2 className="text-lg font-semibold mb-3">Общие показатели · {periodLabel}</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+          <KpiCard
+            label="Просмотры"
+            value={totalViews || null}
+            icon={<Eye className="size-4" />}
+            pendingNote="Подключите платформы"
+          />
+          <KpiCard
+            label="Подписчики"
+            value={totalSubs || null}
+            icon={<Users className="size-4" />}
+            pendingNote="Подключите платформы"
+          />
+          <KpiCard
+            label="Взаимодействия"
+            value={totalInteractions || null}
+            icon={<Heart className="size-4" />}
+            pendingNote="Нет данных"
+          />
+          <KpiCard
+            label="Лиды"
+            value={totalLeads || null}
+            icon={<Target className="size-4" />}
+            pendingNote="Подключите Meta / Метрику"
+          />
+          <KpiCard
+            label="Записи"
+            value={bitrixActive || null}
+            icon={<BookOpen className="size-4" />}
+            pendingNote="Подключите Bitrix24"
+          />
+          <KpiCard
+            label="Продажи"
+            value={bitrixWon || null}
+            icon={<TrendingUp className="size-4" />}
+            pendingNote="Подключите Bitrix24"
+          />
         </div>
       </section>
 
-      {/* §7.6 Динамика — реальный дневной график */}
+      {/* Динамика — мультиплатформенный график */}
       <section>
         <h2 className="text-lg font-semibold mb-3">Динамика · {periodLabel}</h2>
-        <DailyViewsChart
-          title="YouTube — просмотры по дням"
-          daily={detail?.daily_views ?? []}
-          emptyMessage="Подключите YouTube в «Настройках», чтобы увидеть дневную динамику."
+        <MultiPlatformChart
+          ytDaily={detail?.daily_views ?? []}
+          igSeries={ig?.series ?? []}
         />
       </section>
 
-      {/* §7.2 / §6.6 — детальные блоки YouTube */}
+      {/* Карточки платформ */}
+      <section>
+        <h2 className="text-lg font-semibold mb-3">По платформам</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <PlatformCard platform="YOUTUBE" data={data.platforms.YOUTUBE as any} />
+          <PlatformCard platform="INSTAGRAM" data={data.platforms.INSTAGRAM as any} />
+          {/* Meta Ads — ссылка на раздел рекламы */}
+          <Link href="/ads" className="block">
+            <div className="border border-border rounded-xl p-4 bg-background hover:bg-muted/30 transition-colors flex items-center gap-4">
+              <div className="size-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                <Megaphone className="size-5 text-primary" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold text-sm">Meta Ads</div>
+                <div className="text-xs text-muted-foreground">
+                  {metaLeads > 0 ? `${formatNumber(metaLeads)} лидов за 28 дней` : 'Реклама в Facebook / Instagram'}
+                </div>
+              </div>
+              <ArrowLeft className="size-4 text-muted-foreground rotate-180" />
+            </div>
+          </Link>
+        </div>
+      </section>
+
+      {/* YouTube детальная аналитика */}
       {detail && (
         <>
           <section>
-            <h2 className="text-lg font-semibold mb-3">Аудитория и поведение</h2>
+            <h2 className="text-lg font-semibold mb-3">YouTube — аудитория и поведение</h2>
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <DonutChart
                 title="Источники трафика"
@@ -245,14 +352,46 @@ function ProjectDetailContent() {
 
           <section>
             <WeekdayHeatmap
-              title="Активность по дням недели (§6.6)"
+              title="Активность по дням недели"
               daily={detail.daily_views}
+            />
+          </section>
+
+          {/* YouTube KPI */}
+          <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <KpiCard
+              label="Подписчики (YouTube)"
+              value={(yt?.metrics?.subscribers_total) || null}
+              pending={!yt || yt.status !== 'ACTIVE'}
+              pendingNote="Подключите YouTube в «Настройках»"
+              icon={<Users className="size-4" />}
+            />
+            <KpiCard
+              label="Просмотры за 28 дней"
+              value={(yt?.metrics?.views_28d) || null}
+              pending={!yt || yt.status !== 'ACTIVE'}
+              pendingNote="Подключите YouTube в «Настройках»"
+              icon={<Eye className="size-4" />}
+            />
+            <KpiCard
+              label="Видео всего"
+              value={totalVideos || null}
+              pending={!yt || yt.status !== 'ACTIVE'}
+              pendingNote="Подключите YouTube"
+              icon={<Play className="size-4" />}
+            />
+            <KpiCard
+              label="Среднее удержание"
+              value={avgRetention ? `${avgRetention.toFixed(1)}%` : null}
+              pending={!yt || yt.status !== 'ACTIVE'}
+              pendingNote="Подключите YouTube"
+              icon={<Heart className="size-4" />}
             />
           </section>
         </>
       )}
 
-      {/* §7.3 Контент — таблица последних видео YouTube */}
+      {/* Последние видео YouTube */}
       {videos.length > 0 && (
         <section>
           <h2 className="text-lg font-semibold mb-3">Последние видео (YouTube)</h2>
@@ -295,7 +434,6 @@ function ProjectDetailContent() {
         </section>
       )}
 
-      {/* Карточка публикации с заметками — §7.3 */}
       {openVideo && (
         <VideoDetailSheet
           video={openVideo}
@@ -303,17 +441,6 @@ function ProjectDetailContent() {
           onClose={() => setOpenVideo(null)}
         />
       )}
-
-      {/* §7.4-7.5 заглушки */}
-      <section className="border border-border rounded-xl p-5 bg-background">
-        <div className="font-semibold mb-2">Что появится здесь после Этапов 2/4 (ТЗ §17)</div>
-        <ul className="text-sm text-muted-foreground space-y-1">
-          <li>• §7.4 UTM-трафик: переходы из видео и постов на сайт</li>
-          <li>• §7.5 Лиды от проекта: из Bitrix24 по UTM source/medium/campaign</li>
-          <li>• Сравнение с другими проектами (§7.6)</li>
-          <li>• Карточки публикаций с детальной аналитикой и заметками (§7.3)</li>
-        </ul>
-      </section>
     </div>
   );
 }

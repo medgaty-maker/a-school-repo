@@ -333,8 +333,16 @@ export class YoutubeService {
         grant_type: 'refresh_token',
       }),
     });
-    const j = (await r.json()) as { access_token?: string; expires_in?: number; error?: string };
+    const j = (await r.json()) as { access_token?: string; refresh_token?: string; expires_in?: number; error?: string };
     if (!r.ok || !j.access_token) throw new Error(`refresh failed: ${JSON.stringify(j)}`);
+
+    // Save rotated refresh_token if Google issues a new one
+    if (j.refresh_token) {
+      await this.prisma.projectPlatform.update({
+        where: { id: projectPlatformId },
+        data: { refreshTokenEnc: this.crypto.encrypt(j.refresh_token) },
+      });
+    }
 
     this.accessTokenCache.set(projectPlatformId, { token: j.access_token, fetchedAt: Date.now() });
     return j.access_token;

@@ -9,6 +9,16 @@ interface MetricaResponse {
   total_rows: number;
 }
 
+export interface CounterLeads {
+  counterId: string;
+  name: string;
+  phone: number;
+  messenger: number;
+  form: number;
+  social: number;
+  total: number;
+}
+
 export interface LeadBreakdown {
   phone: number;
   messenger: number;
@@ -16,6 +26,7 @@ export interface LeadBreakdown {
   social: number;
   total: number;
   period: string;
+  counters: CounterLeads[];
 }
 
 // Preset → [date_from, date_to] in YYYY-MM-DD
@@ -53,12 +64,9 @@ function resolveDates(preset: string): { dateFrom: string; dateTo: string } {
 export class YandexMetricaService {
   private readonly logger = new Logger(YandexMetricaService.name);
 
-  // Goal IDs for counter 105849697
-  private readonly goalMap = {
-    phone: 515884639,
-    messenger: 495561583,
-    form: 495567928,
-    social: 496509659,
+  private readonly counterGoals: Record<string, { name: string; phone?: number; messenger?: number; form?: number; social?: number }> = {
+    '105849697': { name: 'Авторская школа', phone: 515884639, messenger: 495561583, form: 495567928, social: 496509659 },
+    '106777545': { name: 'AVS', messenger: 511869511, form: 511920198 },
   };
 
   constructor(
@@ -108,13 +116,13 @@ export class YandexMetricaService {
     const token = await this.getToken();
     const cfg = await this.prisma.yandexMetricaConfig.findFirst();
     if (!token || !cfg) {
-      return { phone: 0, messenger: 0, form: 0, social: 0, total: 0, period: datePreset };
+      return { phone: 0, messenger: 0, form: 0, social: 0, total: 0, period: datePreset, counters: [] };
     }
 
-    const counterId = cfg.counterIds.split(',')[0].trim();
+    const counterIds = cfg.counterIds.split(',').map((s) => s.trim()).filter(Boolean);
     const { dateFrom, dateTo } = resolveDates(datePreset);
 
-    const fetchGoal = async (goalId: number): Promise<number> => {
+    const fetchGoal = async (counterId: string, goalId: number): Promise<number> => {
       const url = new URL(API_BASE);
       url.searchParams.set('id', counterId);
       url.searchParams.set('metrics', `ym:s:goal${goalId}reaches`);
@@ -127,22 +135,29 @@ export class YandexMetricaService {
       });
 
       if (!res.ok) {
-        const text = await res.text();
-        this.logger.warn(`Metrica goal ${goalId} error ${res.status}: ${text}`);
+        this.logger.warn(`Metrica counter ${counterId} goal ${goalId} error ${res.status}`);
         return 0;
       }
 
       const data = (await res.json()) as MetricaResponse;
-      const val = data?.totals?.[0] ?? 0;
-      return Math.round(val);
+      return Math.round(data?.totals?.[0] ?? 0);
     };
 
-    const [phone, messenger, form, social] = await Promise.all([
-      fetchGoal(this.goalMap.phone),
-      fetchGoal(this.goalMap.messenger),
-      fetchGoal(this.goalMap.form),
-      fetchGoal(this.goalMap.social),
-    ]);
+    let phone = 0, messenger = 0, form = 0, social = 0;
+    const counters: import('./yandex-metrica.service').CounterLeads[] = [];
+
+    for (const counterId of counterIds) {
+      const goals = this.counterGoals[counterId];
+      if (!goals) continue;
+      const [p, m, f, s] = await Promise.all([
+        goals.phone    ? fetchGoal(counterId, goals.phone)    : Promise.resolve(0),
+        goals.messenger? fetchGoal(counterId, goals.messenger): Promise.resolve(0),
+        goals.form     ? fetchGoal(counterId, goals.form)     : Promise.resolve(0),
+        goals.social   ? fetchGoal(counterId, goals.social)   : Promise.resolve(0),
+      ]);
+      phone += p; messenger += m; form += f; social += s;
+      counters.push({ counterId, name: goals.name, phone: p, messenger: m, form: f, social: s, total: p + m + f + s });
+    }
 
     await this.prisma.yandexMetricaConfig.update({
       where: { id: cfg.id },
@@ -156,6 +171,7 @@ export class YandexMetricaService {
       social,
       total: phone + messenger + form + social,
       period: `${dateFrom} — ${dateTo}`,
+      counters,
     };
   }
 }

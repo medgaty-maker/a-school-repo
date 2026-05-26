@@ -48,4 +48,9 @@ export class BitrixController {
       limit ? parseInt(limit, 10) : 50,
     );
   }
+
+  @Get('stages-breakdown')
+  stagesBreakdown(@Query('days') days?: string) {
+    return this.bitrix.getStagesBreakdown(days ? parseInt(days, 10) : 90);
+  }
 }

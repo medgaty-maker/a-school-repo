@@ -1,8 +1,8 @@
 'use client';
 
 import { Suspense } from 'react';
-import { useEffect, useState, useCallback } from 'react';
-import { Users, TrendingUp, CheckCircle, XCircle, RefreshCw } from 'lucide-react';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { Users, TrendingUp, CheckCircle, XCircle, RefreshCw, ChevronDown } from 'lucide-react';
 import { apiFetch } from '@/lib/api-client';
 import { KpiCard } from '@/components/kpi-card';
 import { DonutChart } from '@/components/widgets/donut-chart';
@@ -62,6 +62,8 @@ type Deal = {
 };
 
 type Status = { configured: boolean; lastSyncAt: string | null; totalDeals: number };
+type StageBreakdown = { stageId: string; stageName: string; count: number; won: number; lost: number };
+type StagesBreakdownData = { total: number; stages: StageBreakdown[] };
 
 function readCookie(name: string): string | null {
   if (typeof document === 'undefined') return null;
@@ -92,6 +94,8 @@ function LeadsContent() {
   const [funnel, setFunnel] = useState<FunnelData | null>(null);
   const [sources, setSources] = useState<SourceData[]>([]);
   const [deals, setDeals] = useState<Deal[]>([]);
+  const [stagesBreakdown, setStagesBreakdown] = useState<StagesBreakdownData | null>(null);
+  const [stagesOpen, setStagesOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -102,16 +106,18 @@ function LeadsContent() {
     if (!token) return;
     setLoading(true);
     try {
-      const [s, f, src, d] = await Promise.all([
+      const [s, f, src, d, sb] = await Promise.all([
         apiFetch<Status>('/bitrix/status', { token }),
         apiFetch<FunnelData>(`/bitrix/funnel?days=${days}`, { token }),
         apiFetch<SourceData[]>(`/bitrix/sources?days=${days}`, { token }),
         apiFetch<Deal[]>(`/bitrix/deals?days=${days}&limit=200`, { token }),
+        apiFetch<StagesBreakdownData>(`/bitrix/stages-breakdown?days=${days}`, { token }),
       ]);
       setStatus(s);
       setFunnel(f);
       setSources(src);
       setDeals(d);
+      setStagesBreakdown(sb);
     } catch (e) {
       console.error(e);
     } finally {
@@ -374,6 +380,36 @@ function LeadsContent() {
               </tbody>
             </table>
           </div>
+        </section>
+      )}
+
+      {/* Stages breakdown */}
+      {stagesBreakdown && stagesBreakdown.total > 0 && (
+        <section className="border border-border rounded-xl bg-background overflow-hidden">
+          <button
+            onClick={() => setStagesOpen((v) => !v)}
+            className="w-full px-5 py-4 flex items-center justify-between hover:bg-muted/30 transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <span className="font-semibold">Лиды по стадиям</span>
+              <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary">{stagesBreakdown.total} всего</span>
+            </div>
+            <ChevronDown className={`size-4 text-muted-foreground transition-transform ${stagesOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {stagesOpen && (
+            <div className="border-t border-border divide-y divide-border">
+              {stagesBreakdown.stages.map((s) => (
+                <div key={s.stageId} className="px-5 py-3 flex items-center justify-between">
+                  <span className="text-sm">{s.stageName || s.stageId}</span>
+                  <div className="flex items-center gap-3 text-sm">
+                    {s.won > 0 && <span className="text-xs px-1.5 py-0.5 rounded bg-success/10 text-success">✓ {s.won}</span>}
+                    {s.lost > 0 && <span className="text-xs px-1.5 py-0.5 rounded bg-danger/10 text-danger">✗ {s.lost}</span>}
+                    <span className="font-medium tabular-nums">{s.count}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       )}
 

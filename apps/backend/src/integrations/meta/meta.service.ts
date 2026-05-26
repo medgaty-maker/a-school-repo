@@ -96,7 +96,27 @@ export class MetaService {
   private readonly logger = new Logger(MetaService.name);
   private readonly insightsCache = new Map<string, { data: unknown; fetchedAt: number }>();
   private readonly CACHE_TTL = 30 * 60 * 1000;
-  private readonly usdToKztRate = parseFloat(process.env.USD_TO_KZT_RATE ?? '460');
+  private cachedKztRate: number = parseFloat(process.env.USD_TO_KZT_RATE ?? '460');
+  private kztRateFetchedAt = 0;
+  private readonly RATE_TTL = 60 * 60 * 1000; // 1 hour
+
+  private async getKztRate(): Promise<number> {
+    if (Date.now() - this.kztRateFetchedAt < this.RATE_TTL) return this.cachedKztRate;
+    try {
+      const res = await fetch('https://open.er-api.com/v6/latest/USD');
+      if (res.ok) {
+        const data = await res.json() as { rates?: Record<string, number> };
+        const rate = data?.rates?.KZT;
+        if (rate && rate > 0) {
+          this.cachedKztRate = rate;
+          this.kztRateFetchedAt = Date.now();
+        }
+      }
+    } catch {
+      // fallback to cached/env value
+    }
+    return this.cachedKztRate;
+  }
 
   constructor(
     private readonly prisma: PrismaService,
@@ -189,6 +209,7 @@ export class MetaService {
       return cached.data as AdInsightsSummary;
     }
 
+    await this.getKztRate();
     const cfg = await this.getConfig();
     if (!cfg) throw new BadRequestException('Meta Ads not configured');
 
@@ -537,13 +558,13 @@ export class MetaService {
 
     const cpl = leads > 0 ? Math.round((spend / leads) * 100) / 100 : 0;
     const roas = spend > 0 ? Math.round((purchaseValue / spend) * 100) / 100 : 0;
-    const kztRate = this.usdToKztRate;
+    const kztRate = this.cachedKztRate;
 
     return { spend, impressions, clicks, reach, ctr, cpc, frequency, leads, cpl, purchaseValue, roas, kztRate };
   }
 
   private emptyInsights(): AdInsightsSummary {
-    return { spend: 0, impressions: 0, clicks: 0, reach: 0, ctr: 0, cpc: 0, frequency: 0, leads: 0, cpl: 0, purchaseValue: 0, roas: 0, kztRate: this.usdToKztRate };
+    return { spend: 0, impressions: 0, clicks: 0, reach: 0, ctr: 0, cpc: 0, frequency: 0, leads: 0, cpl: 0, purchaseValue: 0, roas: 0, kztRate: this.cachedKztRate };
   }
 
   private extractAction(actions: MetaAction[] | undefined, types: string[]): number {

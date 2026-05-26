@@ -62,6 +62,7 @@ export default function CampaignDetailPage() {
   const [datePreset, setDatePreset] = useState(searchParams.get('datePreset') ?? 'last_28d');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [comparing, setComparing] = useState(false);
+  const [previewImg, setPreviewImg] = useState<string | null>(null);
 
   const token = typeof document !== 'undefined' ? readCookie('access_token') : null;
 
@@ -173,7 +174,13 @@ export default function CampaignDetailPage() {
                     <td className="p-3 max-w-xs">
                       <div className="flex items-center gap-3">
                         {ad.thumbnailUrl && (
-                          <img src={ad.thumbnailUrl} alt="" className="size-10 rounded object-cover shrink-0" />
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={ad.thumbnailUrl} alt=""
+                            className="size-10 rounded object-cover shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
+                            title="Нажмите для просмотра"
+                            onClick={(e) => { e.stopPropagation(); setPreviewImg(ad.thumbnailUrl!); }}
+                          />
                         )}
                         <div className="min-w-0">
                           <div className="font-medium truncate">{ad.name}</div>
@@ -209,6 +216,24 @@ export default function CampaignDetailPage() {
 
       {comparing && selectedAds.length >= 2 && (
         <CompareModal ads={selectedAds} onClose={() => setComparing(false)} />
+      )}
+
+      {previewImg && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+          onClick={() => setPreviewImg(null)}
+        >
+          <div className="relative max-w-3xl w-full" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => setPreviewImg(null)}
+              className="absolute -top-10 right-0 text-white/70 hover:text-white text-2xl leading-none"
+            >
+              ✕
+            </button>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={previewImg} alt="Креатив" className="w-full rounded-xl object-contain max-h-[80vh]" />
+          </div>
+        </div>
       )}
     </div>
   );

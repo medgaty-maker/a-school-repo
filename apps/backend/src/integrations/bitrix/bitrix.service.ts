@@ -318,6 +318,29 @@ export class BitrixService {
     return deals;
   }
 
+  async getStagesBreakdown(daysBack: number) {
+    const since = new Date(Date.now() - daysBack * 86_400_000);
+    const deals = await this.prisma.bitrixDeal.findMany({
+      where: { dateCreate: { gte: since } },
+      select: { stageId: true, stageName: true, isWon: true, isLost: true },
+    });
+
+    const map = new Map<string, { stageId: string; stageName: string; count: number; won: number; lost: number }>();
+    for (const d of deals) {
+      const key = d.stageName ?? d.stageId;
+      const cur = map.get(key) ?? { stageId: d.stageId, stageName: key, count: 0, won: 0, lost: 0 };
+      cur.count++;
+      if (d.isWon) cur.won++;
+      if (d.isLost) cur.lost++;
+      map.set(key, cur);
+    }
+
+    return {
+      total: deals.length,
+      stages: [...map.values()].sort((a, b) => b.count - a.count),
+    };
+  }
+
   private async fetchStages(webhookUrl: string): Promise<BitrixStage[]> {
     const res = await fetch(`${webhookUrl}crm.deal.stage.list.json`, {
       method: 'POST',

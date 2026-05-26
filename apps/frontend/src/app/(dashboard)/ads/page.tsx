@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -12,7 +12,8 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveCont
 import { apiFetch } from '@/lib/api-client';
 
 type MetaStatus = { configured: boolean; adAccountId: string | null; lastSyncAt: string | null };
-type LeadBreakdown = { phone: number; messenger: number; form: number; social: number; total: number; period: string };
+type CounterLeads = { counterId: string; name: string; phone: number; messenger: number; form: number; social: number; total: number };
+type LeadBreakdown = { phone: number; messenger: number; form: number; social: number; total: number; period: string; counters: CounterLeads[] };
 
 type AdInsights = {
   spend: number;
@@ -81,6 +82,7 @@ export default function AdsPage() {
   const [error, setError] = useState<string | null>(null);
   const [leads, setLeads] = useState<LeadBreakdown | null>(null);
   const [leadsLoading, setLeadsLoading] = useState(false);
+  const [sortBy, setSortBy] = useState<'default' | 'leads' | 'spend' | 'cpl'>('default');
 
   const token = typeof document !== 'undefined' ? readCookie('access_token') : null;
   const router = useRouter();
@@ -113,6 +115,20 @@ export default function AdsPage() {
       .catch(() => setLeads(null))
       .finally(() => setLeadsLoading(false));
   }, [datePreset, token]);
+
+  const sortedCampaigns = useMemo(() => {
+    const list = [...campaigns];
+    const statusOrder = (s: string) => s === 'active' ? 0 : s === 'paused' ? 1 : 2;
+    if (sortBy === 'default') return list.sort((a, b) => statusOrder(a.status) - statusOrder(b.status));
+    if (sortBy === 'leads') return list.sort((a, b) => b.leads - a.leads);
+    if (sortBy === 'spend') return list.sort((a, b) => b.spend - a.spend);
+    if (sortBy === 'cpl') return list.sort((a, b) => {
+      if (a.cpl === 0) return 1;
+      if (b.cpl === 0) return -1;
+      return a.cpl - b.cpl;
+    });
+    return list;
+  }, [campaigns, sortBy]);
 
   if (!status?.configured) {
     return <NotConnectedView />;
@@ -157,7 +173,7 @@ export default function AdsPage() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <KpiCard icon={<DollarSign className="size-4" />} label="Расход" value={insights ? fmtBoth(insights.spend, insights.kztRate) : '—'} hint={insights?.impressions ? `${fmt(insights.impressions)} показов` : undefined} loading={loading} />
         <KpiCard icon={<MousePointerClick className="size-4" />} label="CTR" tooltip="Кликабельность — % пользователей, нажавших на объявление" value={insights ? `${fmt(insights.ctr, 2)}%` : '—'} hint={insights?.clicks ? `${fmt(insights.clicks)} кликов` : undefined} loading={loading} />
-        <KpiCard icon={<Target className="size-4" />} label="CPL" tooltip="Стоимость лида — расход ÷ количество лидов" value={insights ? (insights.cpl > 0 ? fmtBoth(insights.cpl, insights.kztRate) : '—') : '—'} hint={insights?.leads ? `${fmt(insights.leads)} лидов` : 'нет данных'} loading={loading} />
+        <KpiCard icon={<Target className="size-4" />} label="CPL" tooltip="Стоимость лида — расход ÷ количество лидов" value={insights ? (insights.cpl > 0 ? fmtBoth(insights.cpl, insights.kztRate) : '—') : '—'} hint={insights?.leads ? `${fmt(insights.leads + (leads?.total ?? 0))} лидов` : 'нет данных'} loading={loading} />
         <KpiCard icon={<TrendingUp className="size-4" />} label="ROAS" tooltip="Возврат на рекламные расходы — доход от рекламы ÷ расход" value={insights ? (insights.roas > 0 ? `${fmt(insights.roas, 2)}x` : '—') : '—'} hint={insights?.purchaseValue ? fmtBoth(insights.purchaseValue, insights.kztRate) : undefined} loading={loading} />
       </div>
 
@@ -166,7 +182,7 @@ export default function AdsPage() {
         <KpiCard icon={<Eye className="size-4" />} label="Охват" value={insights ? fmt(insights.reach) : '—'} loading={loading} small />
         <KpiCard icon={<Zap className="size-4" />} label="Частота" tooltip="Среднее число показов одного объявления одному пользователю" value={insights ? fmt(insights.frequency, 2) : '—'} loading={loading} small />
         <KpiCard icon={<MousePointerClick className="size-4" />} label="CPC" tooltip="Стоимость клика — расход ÷ количество кликов" value={insights ? (insights.cpc > 0 ? fmtBoth(insights.cpc, insights.kztRate) : '—') : '—'} loading={loading} small />
-        <KpiCard icon={<Users className="size-4" />} label="Лиды" value={insights ? fmt(insights.leads) : '—'} loading={loading} small />
+        <KpiCard icon={<Users className="size-4" />} label="Лиды" value={insights ? fmt(insights.leads + (leads?.total ?? 0)) : '—'} hint={leads ? `${fmt(insights?.leads ?? 0)} Meta + ${fmt(leads.total)} Метрика` : undefined} loading={loading} small />
       </div>
 
       {/* Campaign spend chart */}
@@ -177,9 +193,19 @@ export default function AdsPage() {
 
       {/* Campaigns table */}
       <div className="border border-border rounded-xl overflow-hidden">
-        <div className="p-4 border-b border-border flex items-center justify-between">
+        <div className="p-4 border-b border-border flex items-center justify-between flex-wrap gap-3">
           <h2 className="font-semibold">Кампании</h2>
-          <BarChart3 className="size-4 text-muted-foreground" />
+          <div className="flex items-center gap-1 text-xs">
+            {(['default', 'leads', 'spend', 'cpl'] as const).map((s) => (
+              <button
+                key={s}
+                onClick={() => setSortBy(s)}
+                className={`px-2.5 py-1 rounded-full transition-colors ${sortBy === s ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
+              >
+                {s === 'default' ? 'По умолчанию' : s === 'leads' ? 'По лидам ↓' : s === 'spend' ? 'По расходу ↓' : 'По эффективности ↑'}
+              </button>
+            ))}
+          </div>
         </div>
         {campaigns.length === 0 && !loading ? (
           <div className="p-8 text-center text-sm text-muted-foreground">
@@ -201,7 +227,7 @@ export default function AdsPage() {
                 </tr>
               </thead>
               <tbody>
-                {campaigns.map((c) => (
+                {sortedCampaigns.map((c) => (
                   <tr key={c.id} onClick={() => router.push(`/ads/${c.id}?datePreset=${datePreset}`)} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors cursor-pointer">
                     <td className="p-3 font-medium max-w-xs truncate">{c.name}</td>
                     <td className="p-3">
@@ -288,6 +314,42 @@ function CampaignSpendChart({ campaigns, loading }: { campaigns: Campaign[]; loa
   );
 }
 
+function CounterLeadsBlock({ counter, total }: { counter: CounterLeads; total: number }) {
+  const items = [
+    { key: 'phone', label: 'Звонки', icon: <Phone className="size-4" />, value: counter.phone },
+    { key: 'messenger', label: 'WhatsApp / мессенджер', icon: <MessageCircle className="size-4" />, value: counter.messenger },
+    { key: 'form', label: 'Форма заявки', icon: <FileText className="size-4" />, value: counter.form },
+    { key: 'social', label: 'Соцсети', icon: <Share2 className="size-4" />, value: counter.social },
+  ].filter((i) => i.value > 0);
+
+  return (
+    <div className="border-t border-border">
+      <div className="px-5 py-2 bg-muted/20 flex items-center justify-between">
+        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{counter.name}</span>
+        <span className="text-xs font-semibold tabular-nums">{counter.total} лидов · {total > 0 ? Math.round(counter.total / total * 100) : 0}%</span>
+      </div>
+      {items.map((item) => {
+        const pct = counter.total > 0 ? (item.value / counter.total) * 100 : 0;
+        return (
+          <div key={item.key} className="px-5 py-2.5 flex items-center gap-4 border-t border-border/50">
+            <div className="text-muted-foreground shrink-0">{item.icon}</div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-sm">{item.label}</span>
+                <span className="text-sm font-semibold tabular-nums">{item.value}</span>
+              </div>
+              <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                <div className="h-full bg-primary rounded-full" style={{ width: `${pct}%` }} />
+              </div>
+            </div>
+            <div className="text-xs text-muted-foreground w-10 text-right tabular-nums">{Math.round(pct)}%</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function YandexLeadsSection({ leads, loading }: { leads: LeadBreakdown | null; loading: boolean }) {
   const [open, setOpen] = useState(true);
 
@@ -300,13 +362,6 @@ function YandexLeadsSection({ leads, loading }: { leads: LeadBreakdown | null; l
   }
 
   if (!leads || leads.total === 0) return null;
-
-  const items = [
-    { key: 'phone', label: 'Звонки', icon: <Phone className="size-4" />, value: leads.phone },
-    { key: 'messenger', label: 'WhatsApp / мессенджер', icon: <MessageCircle className="size-4" />, value: leads.messenger },
-    { key: 'form', label: 'Форма заявки', icon: <FileText className="size-4" />, value: leads.form },
-    { key: 'social', label: 'Соцсети (Instagram)', icon: <Share2 className="size-4" />, value: leads.social },
-  ].filter((i) => i.value > 0);
 
   return (
     <div className="border border-border rounded-xl bg-background overflow-hidden">
@@ -324,28 +379,9 @@ function YandexLeadsSection({ leads, loading }: { leads: LeadBreakdown | null; l
           <ChevronDown className={`size-4 transition-transform ${open ? 'rotate-180' : ''}`} />
         </div>
       </button>
-      {open && (
-        <div className="border-t border-border divide-y divide-border">
-          {items.map((item) => {
-            const pct = leads.total > 0 ? (item.value / leads.total) * 100 : 0;
-            return (
-              <div key={item.key} className="px-5 py-3 flex items-center gap-4">
-                <div className="text-muted-foreground shrink-0">{item.icon}</div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm">{item.label}</span>
-                    <span className="text-sm font-semibold tabular-nums">{item.value}</span>
-                  </div>
-                  <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                    <div className="h-full bg-primary rounded-full" style={{ width: `${pct}%` }} />
-                  </div>
-                </div>
-                <div className="text-xs text-muted-foreground w-10 text-right tabular-nums">{Math.round(pct)}%</div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+      {open && leads.counters.map((c) => (
+        <CounterLeadsBlock key={c.counterId} counter={c} total={leads.total} />
+      ))}
     </div>
   );
 }
