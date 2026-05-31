@@ -11,7 +11,7 @@ const IG_SCOPES = [
   'instagram_business_manage_insights',
 ].join(',');
 
-const IG_API_BASE = 'https://graph.instagram.com';
+const IG_API_BASE = 'https://graph.instagram.com/v22.0';
 
 // --- Ads API types ---
 
@@ -230,6 +230,27 @@ export class MetaService {
     return result;
   }
 
+  async getInsightsDaily(datePreset = 'last_28d'): Promise<Array<{ date: string; impressions: number; spend: number; leads: number }>> {
+    const cfg = await this.getConfig();
+    if (!cfg) return [];
+    const url = `${META_API_BASE}/${cfg.adAccountId}/insights?fields=impressions,spend,actions&date_preset=${datePreset}&time_increment=1&access_token=${cfg.accessToken}`;
+    const res = await fetch(url);
+    const json = (await res.json()) as { data?: any[]; error?: any };
+    if (json.error) return [];
+    return (json.data ?? []).map((d: any) => {
+      const actions: Array<{ action_type: string; value: string }> = d.actions ?? [];
+      const leads = actions
+        .filter((a) => a.action_type === 'lead' || a.action_type === 'onsite_conversion.lead_grouped')
+        .reduce((sum, a) => sum + Number(a.value ?? 0), 0);
+      return {
+        date: String(d.date_start),
+        impressions: Number(d.impressions ?? 0),
+        spend: Number(d.spend ?? 0),
+        leads: Math.round(leads),
+      };
+    });
+  }
+
   async getCampaigns(datePreset = 'last_28d'): Promise<CampaignWithInsights[]> {
     const cfg = await this.getConfig();
     if (!cfg) throw new BadRequestException('Meta Ads not configured');
@@ -295,6 +316,7 @@ export class MetaService {
     url.searchParams.set('scope', IG_SCOPES);
     url.searchParams.set('state', projectPlatformId);
     url.searchParams.set('response_type', 'code');
+    url.searchParams.set('enable_profile_selector', 'true');
     return url.toString();
   }
 
@@ -310,32 +332,35 @@ export class MetaService {
       throw new BadRequestException('Invalid OAuth state');
     }
 
-    // 1. Exchange code → short-lived Instagram token
+    // 1. Exchange code → Instagram token; response includes user_id directly
     const shortToken = await this.exchangeCode(code);
 
-    // 2. Exchange → long-lived Instagram token (60 дней)
-    const longToken = await this.exchangeForLongLived(shortToken.access_token);
-
-    // 3. Get Instagram user info directly from /me
-    const meRes = await fetch(`${IG_API_BASE}/me?fields=id,username&access_token=${encodeURIComponent(longToken.access_token)}`);
-    const meData = (await meRes.json()) as { id?: string; username?: string; error?: { message: string } };
-    if (meData.error || !meData.id) {
-      throw new BadRequestException(`Не удалось получить профиль Instagram: ${meData.error?.message ?? 'no id'}`);
+    // 2. user_id comes from code exchange; username from /me if available
+    const igUserId = shortToken.user_id || '';
+    if (!igUserId) {
+      throw new BadRequestException('Instagram OAuth did not return user_id');
     }
-    const igUserId = meData.id;
-    const username = meData.username ?? igUserId;
 
-    // 4. Store in ProjectPlatform
-    const expiresAt = longToken.expires_in
-      ? new Date(Date.now() + longToken.expires_in * 1000)
-      : new Date(Date.now() + 60 * 24 * 3600 * 1000);
+    // 3. Fetch username via /{user_id} (instagram_business_basic doesn't support /me)
+    let username = igUserId;
+    try {
+      const uRes = await fetch(`${IG_API_BASE}/${igUserId}?fields=id,username&access_token=${encodeURIComponent(shortToken.access_token)}`);
+      const uData = (await uRes.json()) as { id?: string; username?: string };
+      this.logger.log(`IG user lookup: ${JSON.stringify(uData).slice(0, 200)}`);
+      if (uData.username) username = uData.username;
+    } catch {
+      this.logger.warn('Could not fetch IG username, using user_id as name');
+    }
+
+    // 4. Store in ProjectPlatform (token valid ~60 days with Instagram Login API)
+    const expiresAt = new Date(Date.now() + 60 * 24 * 3600 * 1000);
 
     await this.prisma.projectPlatform.update({
       where: { id: pp.id },
       data: {
         externalAccountId: igUserId,
         externalAccountName: username,
-        accessTokenEnc: this.crypto.encrypt(longToken.access_token),
+        accessTokenEnc: this.crypto.encrypt(shortToken.access_token),
         tokenExpiresAt: expiresAt,
         status: IntegrationStatus.ACTIVE,
         lastError: null,
@@ -363,7 +388,7 @@ export class MetaService {
       // Fallback: Instagram Graph API (IGAA... tokens from Instagram Business Login or Basic Display)
       if (data.error) {
         this.logger.log(`Facebook /me failed (${data.error.message}), trying graph.instagram.com...`);
-        res = await fetch(`https://graph.instagram.com/me?fields=id,username&access_token=${encodeURIComponent(accessToken)}`);
+        res = await fetch(`https://graph.instagram.com/v22.0/me?fields=id,username&access_token=${encodeURIComponent(accessToken)}`);
         data = (await res.json()) as { id?: string; username?: string; name?: string; error?: { message: string; code?: number } };
       }
 
@@ -431,7 +456,7 @@ export class MetaService {
 
     // Fallback to graph.instagram.com for IGAA tokens
     if (data.error) {
-      res = await fetch(`https://graph.instagram.com/${pp.externalAccountId}?fields=${fields}&access_token=${encodedToken}`);
+      res = await fetch(`https://graph.instagram.com/v22.0/${pp.externalAccountId}?fields=${fields}&access_token=${encodedToken}`);
       data = (await res.json()) as typeof data;
     }
 
@@ -504,26 +529,34 @@ export class MetaService {
   }
 
   // Instagram Business Login — обмен кода на короткий IGAA токен
-  private async exchangeCode(code: string): Promise<{ access_token: string }> {
+  private async exchangeCode(code: string): Promise<{ access_token: string; user_id?: string }> {
     const appId = this.requireEnv('META_IG_APP_ID');
     const appSecret = this.requireEnv('META_IG_APP_SECRET');
     const redirect = this.requireEnv('META_OAUTH_REDIRECT');
 
     const params = new URLSearchParams({ client_id: appId, client_secret: appSecret, redirect_uri: redirect, code, grant_type: 'authorization_code' });
     const res = await fetch('https://api.instagram.com/oauth/access_token', { method: 'POST', body: params });
-    const data = (await res.json()) as { access_token?: string; error?: { message: string } };
+    const data = (await res.json()) as { access_token?: string; user_id?: string; error?: { message: string } };
+    this.logger.log(`IG code exchange response: ${JSON.stringify({ ...data, access_token: data.access_token?.slice(0, 12) })}`);
     if (data.error || !data.access_token) {
       throw new BadRequestException(`Instagram token exchange failed: ${data.error?.message ?? 'no token'}`);
     }
-    return { access_token: data.access_token };
+    return { access_token: data.access_token, user_id: String(data.user_id ?? '') };
   }
 
   // Instagram Business Login — долгосрочный токен (60 дней) через graph.instagram.com
   private async exchangeForLongLived(shortToken: string): Promise<{ access_token: string; expires_in?: number }> {
     const appSecret = this.requireEnv('META_IG_APP_SECRET');
 
-    const url = `${IG_API_BASE}/access_token?grant_type=ig_exchange_token&client_secret=${appSecret}&access_token=${encodeURIComponent(shortToken)}`;
-    const res = await fetch(url);
+    const params = new URLSearchParams({
+      grant_type: 'ig_exchange_token',
+      client_secret: appSecret,
+      access_token: shortToken,
+    });
+    const res = await fetch(`${IG_API_BASE}/access_token`, {
+      method: 'POST',
+      body: params,
+    });
     const data = (await res.json()) as { access_token?: string; expires_in?: number; error?: { message: string } };
     if (data.error || !data.access_token) {
       throw new BadRequestException(`Instagram long-lived token exchange failed: ${data.error?.message ?? 'no token'}`);
@@ -601,9 +634,46 @@ export class MetaService {
     }
 
     // Fetch insights via graph.instagram.com (работает с Instagram Business Login токенами)
-    let reach = 0, impressions = 0, profileViews = 0, websiteClicks = 0;
+    // period=days_28 без metric_type=total_value → values[] содержит rolling 28d агрегаты,
+    // берём последнее значение (= текущий 28-дневный итог, как в приложении Instagram)
+    let reach = 0, accountsEngaged = 0, profileViews = 0, websiteClicks = 0, totalInteractions = 0, impressions28d = 0;
+
+    // Helper: last value of a rolling-28d time-series (no metric_type=total_value)
+    const lastVal = (data: Array<{ name: string; values?: Array<{ value: number }> }>, name: string) => {
+      const m = data.find((d) => d.name === name);
+      if (!m?.values?.length) return 0;
+      return m.values[m.values.length - 1].value ?? 0;
+    };
+
+    // Helper: total_value for metrics that require metric_type=total_value
+    const totalVal = (data: Array<{ name: string; total_value?: { value: number }; values?: Array<{ value: number }> }>, name: string) => {
+      const m = data.find((d) => d.name === name);
+      if (!m) return 0;
+      if (m.total_value?.value != null) return m.total_value.value;
+      return (m.values ?? []).reduce((s, v) => s + (v.value ?? 0), 0);
+    };
+
+    // reach — needs period=days_28 WITHOUT metric_type to return correct rolling value
     try {
-      const metrics = 'reach,accounts_engaged,profile_views,website_clicks';
+      const reachRes = await fetch(
+        `${IG_API_BASE}/${igId}/insights?metric=reach&period=days_28&access_token=${encodedToken}`,
+      );
+      const reachJson = (await reachRes.json()) as {
+        data?: Array<{ name: string; values?: Array<{ value: number }> }>;
+        error?: { message: string };
+      };
+      if (!reachJson.error && reachJson.data) {
+        reach = lastVal(reachJson.data, 'reach');
+      } else if (reachJson.error) {
+        this.logger.warn(`Instagram [${pp.id}] reach unavailable: ${reachJson.error.message}`);
+      }
+    } catch (e) {
+      this.logger.warn(`Instagram [${pp.id}] reach fetch error: ${(e as Error).message}`);
+    }
+
+    // accounts_engaged, profile_views, website_clicks, total_interactions — require metric_type=total_value
+    try {
+      const metrics = 'accounts_engaged,profile_views,website_clicks,total_interactions';
       const insRes = await fetch(
         `${IG_API_BASE}/${igId}/insights?metric=${metrics}&period=days_28&metric_type=total_value&access_token=${encodedToken}`,
       );
@@ -611,23 +681,52 @@ export class MetaService {
         data?: Array<{ name: string; total_value?: { value: number }; values?: Array<{ value: number }> }>;
         error?: { message: string };
       };
-
       if (!insJson.error && insJson.data) {
-        const getVal = (name: string) => {
-          const m = insJson.data!.find((d) => d.name === name);
-          if (!m) return 0;
-          if (m.total_value?.value != null) return m.total_value.value;
-          return (m.values ?? []).reduce((s, v) => s + (v.value ?? 0), 0);
-        };
-        reach = getVal('reach');
-        impressions = getVal('accounts_engaged');
-        profileViews = getVal('profile_views');
-        websiteClicks = getVal('website_clicks');
+        accountsEngaged = totalVal(insJson.data, 'accounts_engaged');
+        profileViews = totalVal(insJson.data, 'profile_views');
+        websiteClicks = totalVal(insJson.data, 'website_clicks');
+        totalInteractions = totalVal(insJson.data, 'total_interactions');
       } else if (insJson.error) {
         this.logger.warn(`Instagram [${pp.id}] insights unavailable: ${insJson.error.message}`);
       }
     } catch (e) {
       this.logger.warn(`Instagram [${pp.id}] insights fetch error: ${(e as Error).message}`);
+    }
+
+    // Try impressions first (includes paid + organic), fall back to views (organic only)
+    try {
+      const impRes = await fetch(
+        `${IG_API_BASE}/${igId}/insights?metric=impressions&period=days_28&metric_type=total_value&access_token=${encodedToken}`,
+      );
+      const impJson = (await impRes.json()) as {
+        data?: Array<{ name: string; total_value?: { value: number }; values?: Array<{ value: number }> }>;
+        error?: { message: string };
+      };
+      this.logger.log(`Instagram [${pp.id}] impressions raw: ${JSON.stringify(impJson).slice(0, 300)}`);
+      if (!impJson.error && impJson.data) {
+        const m = impJson.data.find((d) => d.name === 'impressions');
+        if (m?.total_value?.value) {
+          impressions28d = m.total_value.value;
+          this.logger.log(`Instagram [${pp.id}] impressions (paid+organic): ${impressions28d}`);
+        }
+      }
+      // fallback to organic-only views if impressions unavailable
+      if (impressions28d === 0) {
+        const viewsRes = await fetch(
+          `${IG_API_BASE}/${igId}/insights?metric=views&period=days_28&metric_type=total_value&access_token=${encodedToken}`,
+        );
+        const viewsJson = (await viewsRes.json()) as {
+          data?: Array<{ name: string; total_value?: { value: number } }>;
+          error?: { message: string };
+        };
+        if (!viewsJson.error && viewsJson.data) {
+          const m = viewsJson.data.find((d) => d.name === 'views');
+          if (m?.total_value?.value != null) impressions28d = m.total_value.value;
+        }
+        if (impJson.error) this.logger.warn(`Instagram [${pp.id}] impressions unavailable: ${impJson.error.message}`);
+      }
+    } catch (e) {
+      this.logger.warn(`Instagram [${pp.id}] views fetch error: ${(e as Error).message}`);
     }
 
     const now = new Date();
@@ -637,7 +736,9 @@ export class MetaService {
     const snapshotMetrics: Array<[string, number]> = [
       ['followers_count', followersCount],
       ['reach_28d', reach],
-      ['impressions_28d', impressions],
+      ['impressions_28d', accountsEngaged],
+      ['views_28d', impressions28d],
+      ['total_interactions_28d', totalInteractions],
       ['profile_visits_28d', profileViews],
       ['website_clicks_28d', websiteClicks],
     ];

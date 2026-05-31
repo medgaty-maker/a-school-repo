@@ -41,10 +41,12 @@ const METRICS_BY_PLATFORM: Record<string, Array<{ key: string; label: string; hi
   ],
   INSTAGRAM: [
     { key: 'followers_count', label: 'Подписчики' },
-    { key: 'reach_28d', label: 'Охват (28д)' },
+    { key: 'views_28d', label: 'Просмотры (28д)', hint: 'органика — без рекламного трафика' },
     { key: 'impressions_28d', label: 'Вовлечённость (28д)', hint: 'аккаунтов взаимодействовали' },
+    { key: 'reach_28d', label: 'Охват (28д)' },
     { key: 'profile_visits_28d', label: 'Посещения профиля' },
     { key: 'website_clicks_28d', label: 'Клики по ссылке' },
+    { key: 'total_interactions_28d', label: 'Взаимодействие (28д)', hint: 'лайки + комментарии + репосты + сохранения' },
   ],
   FACEBOOK: [
     { key: 'page_reach_28d', label: 'Охват страницы' },

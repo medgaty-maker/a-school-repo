@@ -64,6 +64,8 @@ type Deal = {
 type Status = { configured: boolean; lastSyncAt: string | null; totalDeals: number };
 type StageBreakdown = { stageId: string; stageName: string; count: number; won: number; lost: number };
 type StagesBreakdownData = { total: number; stages: StageBreakdown[] };
+type PipelineStage = { stageName: string; count: number; percent: number; isWon: boolean; isLost: boolean };
+type PipelineStagesData = { total: number; stages: PipelineStage[] };
 
 function readCookie(name: string): string | null {
   if (typeof document === 'undefined') return null;
@@ -95,7 +97,9 @@ function LeadsContent() {
   const [sources, setSources] = useState<SourceData[]>([]);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [stagesBreakdown, setStagesBreakdown] = useState<StagesBreakdownData | null>(null);
+  const [pipelineStages, setPipelineStages] = useState<PipelineStagesData | null>(null);
   const [stagesOpen, setStagesOpen] = useState(false);
+  const [pipelineStagesOpen, setPipelineStagesOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -106,18 +110,20 @@ function LeadsContent() {
     if (!token) return;
     setLoading(true);
     try {
-      const [s, f, src, d, sb] = await Promise.all([
+      const [s, f, src, d, sb, ps] = await Promise.all([
         apiFetch<Status>('/bitrix/status', { token }),
         apiFetch<FunnelData>(`/bitrix/funnel?days=${days}`, { token }),
         apiFetch<SourceData[]>(`/bitrix/sources?days=${days}`, { token }),
         apiFetch<Deal[]>(`/bitrix/deals?days=${days}&limit=200`, { token }),
         apiFetch<StagesBreakdownData>(`/bitrix/stages-breakdown?days=${days}`, { token }),
+        apiFetch<PipelineStagesData>('/bitrix/pipeline-stages?days=90', { token }).catch(() => null),
       ]);
       setStatus(s);
       setFunnel(f);
       setSources(src);
       setDeals(d);
       setStagesBreakdown(sb);
+      if (ps) setPipelineStages(ps);
     } catch (e) {
       console.error(e);
     } finally {
@@ -383,45 +389,50 @@ function LeadsContent() {
         </section>
       )}
 
-      {/* Stages breakdown */}
-      {stagesBreakdown && stagesBreakdown.total > 0 && (
+      {/* Pipeline stages breakdown (Резерв, Продажа, Набор в 1 класс) */}
+      {pipelineStages && pipelineStages.total > 0 && (
         <section className="border border-border rounded-xl bg-background overflow-hidden">
           <button
-            onClick={() => setStagesOpen((v) => !v)}
+            onClick={() => setPipelineStagesOpen((v) => !v)}
             className="w-full px-5 py-4 flex items-center justify-between hover:bg-muted/30 transition-colors"
           >
             <div className="flex items-center gap-3">
               <span className="font-semibold">Лиды по стадиям</span>
-              <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary">{stagesBreakdown.total} всего</span>
+              <span className="text-xs text-muted-foreground">воронки: Резерв, Продажа, Набор в 1 класс</span>
+              <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary">Всего: {pipelineStages.total}</span>
             </div>
-            <ChevronDown className={`size-4 text-muted-foreground transition-transform ${stagesOpen ? 'rotate-180' : ''}`} />
+            <ChevronDown className={`size-4 text-muted-foreground transition-transform ${pipelineStagesOpen ? 'rotate-180' : ''}`} />
           </button>
-          {stagesOpen && (
+          {pipelineStagesOpen && (
             <div className="border-t border-border divide-y divide-border">
-              {stagesBreakdown.stages.map((s) => (
-                <div key={s.stageId} className="px-5 py-3 flex items-center justify-between">
-                  <span className="text-sm">{s.stageName || s.stageId}</span>
-                  <div className="flex items-center gap-3 text-sm">
-                    {s.won > 0 && <span className="text-xs px-1.5 py-0.5 rounded bg-success/10 text-success">✓ {s.won}</span>}
-                    {s.lost > 0 && <span className="text-xs px-1.5 py-0.5 rounded bg-danger/10 text-danger">✗ {s.lost}</span>}
-                    <span className="font-medium tabular-nums">{s.count}</span>
+              {pipelineStages.stages.map((s) => {
+                const nearWon = !s.isWon && !s.isLost && /договор|взнос/i.test(s.stageName);
+                return (
+                  <div key={s.stageName} className="px-5 py-3 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className={`text-sm font-medium ${s.isWon ? 'text-success' : s.isLost ? 'text-danger' : nearWon ? 'text-success/80' : ''}`}>
+                        {s.stageName}
+                        {s.isWon && ' ✅'}
+                        {nearWon && ' 🔜'}
+                      </span>
+                      <div className="flex items-center gap-3 text-sm tabular-nums">
+                        <span className="text-muted-foreground text-xs">{s.percent}%</span>
+                        <span className="font-semibold">{s.count}</span>
+                      </div>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${s.isWon || nearWon ? 'bg-success' : s.isLost ? 'bg-danger' : 'bg-primary'}`}
+                        style={{ width: `${s.percent}%` }}
+                      />
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>
       )}
-
-      {/* Placeholder for future stages */}
-      <section className="border border-border rounded-xl p-5 bg-background">
-        <div className="font-semibold mb-2">Что появится в следующих этапах (§9 ТЗ)</div>
-        <ul className="text-sm text-muted-foreground space-y-1">
-          <li>• §9.3 Качество лидов: время первого ответа, доля дошедших до встречи</li>
-          <li>• §9.4 Когортный анализ: путь лидов в течение 1–3 месяцев</li>
-          <li>• Сопоставление лидов с рекламными кампаниями Meta Ads (Этап 4)</li>
-        </ul>
-      </section>
     </div>
   );
 }

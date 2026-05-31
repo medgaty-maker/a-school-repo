@@ -52,6 +52,11 @@ export class MetaController {
     return this.meta.getAdInsights(datePreset ?? 'last_28d');
   }
 
+  @Get('ads/insights-daily')
+  getInsightsDaily(@Query('datePreset') datePreset?: string) {
+    return this.meta.getInsightsDaily(datePreset ?? 'last_28d');
+  }
+
   @Get('ads/campaigns')
   getCampaigns(@Query('datePreset') datePreset?: string) {
     return this.meta.getCampaigns(datePreset ?? 'last_28d');
@@ -129,5 +134,11 @@ export class MetaController {
   @Get('instagram/:projectPlatformId/insights')
   getInstagramInsights(@Param('projectPlatformId') projectPlatformId: string) {
     return this.meta.getInstagramInsights(projectPlatformId);
+  }
+
+  @Roles(Role.ADMIN, Role.MARKETING_DIRECTOR, Role.DIRECTOR, Role.SMM)
+  @Post('instagram/:projectPlatformId/sync')
+  syncInstagram(@Param('projectPlatformId') projectPlatformId: string) {
+    return this.meta.captureInstagramSnapshot(projectPlatformId);
   }
 }

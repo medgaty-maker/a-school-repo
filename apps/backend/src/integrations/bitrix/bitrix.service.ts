@@ -29,6 +29,11 @@ interface BitrixStage {
   CATEGORY_ID?: string;
 }
 
+interface BitrixCategory {
+  ID: string;
+  NAME: string;
+}
+
 @Injectable()
 export class BitrixService {
   private readonly logger = new Logger(BitrixService.name);
@@ -93,12 +98,15 @@ export class BitrixService {
     let errors = 0;
 
     try {
-      const [deals, stages] = await Promise.all([
+      const [deals, stages, categories] = await Promise.all([
         this.fetchAllDeals(webhookUrl),
         this.fetchStages(webhookUrl),
+        this.fetchCategories(webhookUrl),
       ]);
 
       const stageMap = new Map<string, string>(stages.map((s) => [s.STATUS_ID, s.NAME]));
+      const categoryMap = new Map<string, string>(categories.map((c) => [c.ID, c.NAME]));
+      categoryMap.set('0', 'Общая');
 
       for (const d of deals) {
         try {
@@ -112,6 +120,7 @@ export class BitrixService {
               stageId: d.STAGE_ID,
               stageName: stageMap.get(d.STAGE_ID) ?? d.STAGE_ID,
               categoryId: d.CATEGORY_ID ?? null,
+              categoryName: d.CATEGORY_ID ? (categoryMap.get(d.CATEGORY_ID) ?? null) : categoryMap.get('0') ?? null,
               sourceId: d.SOURCE_ID ?? null,
               utmSource: d.UTM_SOURCE ?? null,
               utmMedium: d.UTM_MEDIUM ?? null,
@@ -133,6 +142,7 @@ export class BitrixService {
               stageId: d.STAGE_ID,
               stageName: stageMap.get(d.STAGE_ID) ?? d.STAGE_ID,
               categoryId: d.CATEGORY_ID ?? null,
+              categoryName: d.CATEGORY_ID ? (categoryMap.get(d.CATEGORY_ID) ?? null) : categoryMap.get('0') ?? null,
               sourceId: d.SOURCE_ID ?? null,
               utmSource: d.UTM_SOURCE ?? null,
               utmMedium: d.UTM_MEDIUM ?? null,
@@ -350,5 +360,100 @@ export class BitrixService {
     if (!res.ok) return [];
     const data = (await res.json()) as { result?: BitrixStage[] };
     return data.result ?? [];
+  }
+
+  private async fetchCategories(webhookUrl: string): Promise<BitrixCategory[]> {
+    const res = await fetch(`${webhookUrl}crm.dealcategory.list.json`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { result?: BitrixCategory[] };
+    return data.result ?? [];
+  }
+
+  async getPipelineStages(daysBack = 90) {
+    const since = new Date(Date.now() - daysBack * 86_400_000);
+    const SALES_PIPELINES = ['резерв', 'продажа', 'набор в 1 класс'];
+
+    const allDeals = await this.prisma.bitrixDeal.findMany({
+      where: { dateCreate: { gte: since } },
+      select: { stageId: true, stageName: true, categoryName: true, isWon: true, isLost: true },
+    });
+
+    const filtered = allDeals.filter((d) => {
+      const name = (d.categoryName ?? '').toLowerCase();
+      return SALES_PIPELINES.some((p) => name.includes(p));
+    });
+
+    const deals = filtered.length > 0 ? filtered : allDeals;
+    const total = deals.length;
+
+    const stageMap = new Map<string, { stageName: string; count: number; isWon: boolean; isLost: boolean }>();
+    for (const d of deals) {
+      const key = d.stageName ?? d.stageId;
+      const cur = stageMap.get(key) ?? { stageName: key, count: 0, isWon: d.isWon, isLost: d.isLost };
+      cur.count++;
+      stageMap.set(key, cur);
+    }
+
+    const stages = [...stageMap.values()]
+      .map((s) => ({
+        stageName: s.stageName,
+        count: s.count,
+        percent: total > 0 ? Math.round((s.count / total) * 1000) / 10 : 0,
+        isWon: s.isWon,
+        isLost: s.isLost,
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    return { total, stages };
+  }
+
+  // Фильтр по конкретным воронкам (Резерв, продажа, набор в 1 класс)
+  async getPipelineFunnel(daysBack = 90) {
+    const since = new Date(Date.now() - daysBack * 86_400_000);
+    const SALES_PIPELINES = ['резерв', 'продажа', 'набор в 1 класс'];
+
+    const allDeals = await this.prisma.bitrixDeal.findMany({
+      where: { dateCreate: { gte: since } },
+      select: { isWon: true, isLost: true, categoryId: true, categoryName: true, opportunity: true },
+    });
+
+    // Filter by pipeline name (case-insensitive)
+    const filtered = allDeals.filter((d) => {
+      const name = (d.categoryName ?? '').toLowerCase();
+      return SALES_PIPELINES.some((p) => name.includes(p));
+    });
+
+    // If no matches (category names not yet synced), fall back to all deals
+    const deals = filtered.length > 0 ? filtered : allDeals;
+
+    const won = deals.filter((d) => d.isWon).length;
+    const lost = deals.filter((d) => d.isLost).length;
+    const inProgress = deals.length - won - lost;
+    const totalAmount = deals.filter((d) => d.isWon).reduce((s, d) => s + Number(d.opportunity ?? 0), 0);
+
+    // Breakdown by pipeline
+    const byPipeline = new Map<string, { won: number; inProgress: number; total: number }>();
+    for (const d of deals) {
+      const key = d.categoryName ?? `pipeline_${d.categoryId ?? '0'}`;
+      const cur = byPipeline.get(key) ?? { won: 0, inProgress: 0, total: 0 };
+      cur.total++;
+      if (d.isWon) cur.won++;
+      else if (!d.isLost) cur.inProgress++;
+      byPipeline.set(key, cur);
+    }
+
+    return {
+      won,
+      inProgress,
+      lost,
+      totalAmount: Math.round(totalAmount),
+      total: deals.length,
+      pipelines: [...byPipeline.entries()].map(([name, v]) => ({ name, ...v })).sort((a, b) => b.total - a.total),
+      isFiltered: filtered.length > 0,
+    };
   }
 }

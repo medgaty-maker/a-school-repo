@@ -127,7 +127,7 @@ curl -s -o /dev/null http://localhost:3000 2>/dev/null \
 
 # 10. ngrok — HTTPS тоннель для бэкенда (нужен для Instagram OAuth)
 info "Запускаю ngrok (HTTPS тоннель :4000)..."
-nohup ngrok http 4000 --domain="${NGROK_DOMAIN}" > "$LOG_DIR/ngrok.log" 2>&1 &
+nohup ngrok http 3000 --domain="${NGROK_DOMAIN}" > "$LOG_DIR/ngrok.log" 2>&1 &
 echo $! > "$LOG_DIR/ngrok.pid"
 sleep 3
 if curl -s http://127.0.0.1:4040/api/tunnels &>/dev/null; then

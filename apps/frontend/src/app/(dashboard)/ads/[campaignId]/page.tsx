@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, RefreshCw, AlertTriangle, X, BarChart2 } from 'lucide-react';
+import { ArrowLeft, RefreshCw, AlertTriangle, X, BarChart2, ZoomIn } from 'lucide-react';
 import { apiFetch } from '@/lib/api-client';
 
 type AdInsights = {
@@ -174,13 +174,16 @@ export default function CampaignDetailPage() {
                     <td className="p-3 max-w-xs">
                       <div className="flex items-center gap-3">
                         {ad.thumbnailUrl && (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={ad.thumbnailUrl} alt=""
-                            className="size-10 rounded object-cover shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
-                            title="Нажмите для просмотра"
+                          <div
+                            className="relative group size-10 shrink-0 cursor-zoom-in"
                             onClick={(e) => { e.stopPropagation(); setPreviewImg(ad.thumbnailUrl!); }}
-                          />
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={ad.thumbnailUrl} alt="" className="size-10 rounded object-cover" />
+                            <div className="absolute inset-0 rounded bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                              <ZoomIn className="size-4 text-white" />
+                            </div>
+                          </div>
                         )}
                         <div className="min-w-0">
                           <div className="font-medium truncate">{ad.name}</div>
@@ -226,9 +229,9 @@ export default function CampaignDetailPage() {
           <div className="relative max-w-3xl w-full" onClick={(e) => e.stopPropagation()}>
             <button
               onClick={() => setPreviewImg(null)}
-              className="absolute -top-10 right-0 text-white/70 hover:text-white text-2xl leading-none"
+              className="absolute -top-4 -right-4 size-8 bg-black/60 hover:bg-black/80 rounded-full flex items-center justify-center text-white transition-colors drop-shadow-lg z-10"
             >
-              ✕
+              <X className="size-4" />
             </button>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={previewImg} alt="Креатив" className="w-full rounded-xl object-contain max-h-[80vh]" />

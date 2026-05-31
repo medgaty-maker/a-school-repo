@@ -215,6 +215,7 @@ model BitrixDeal {
   stageId      String   // STAGE_ID: e.g. NEW, C1:NEW, C1:WON
   stageName    String?
   categoryId   String?  // pipeline/funnel id
+  categoryName String?  // pipeline/funnel name
   sourceId     String?  // SOURCE_ID from Bitrix: WEB, CALL, EMAIL, etc.
   utmSource    String?
   utmMedium    String?

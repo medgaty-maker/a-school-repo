@@ -4,10 +4,10 @@ import { Suspense } from 'react';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Eye, Users, Heart, Play, Target, BookOpen, TrendingUp, Megaphone } from 'lucide-react';
+import { ArrowLeft, Eye, Users, Heart, Play, Target, BookOpen, TrendingUp, Megaphone, Sparkles, AlertCircle, TrendingDown, Info } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip,
-  ResponsiveContainer, Legend,
+  ResponsiveContainer, Legend, CartesianGrid,
 } from 'recharts';
 import { apiFetch } from '@/lib/api-client';
 import { KpiCard } from '@/components/kpi-card';
@@ -62,9 +62,13 @@ type YoutubeDetail = {
   operating_systems: Array<{ operatingSystem: string; views: number }>;
 };
 
-type AdInsights = { leads: number; spend: number };
+type AdInsights = { leads: number; spend: number; impressions: number; clicks: number; reach: number; ctr: number; cpc: number; cpl: number; roas: number; kztRate: number };
 type LeadBreakdown = { total: number };
-type FunnelSummary = { won: number; inProgress: number };
+type PipelineFunnel = { won: number; inProgress: number; totalAmount: number };
+type MetaDaily = Array<{ date: string; impressions: number; spend: number; leads: number }>;
+type YandexDaily = Array<{ date: string; visits: number }>;
+type AiRecommendation = { priority: string; page: string; issue: string; recommendation: string; expectedImpact: string };
+type AiInsights = { recommendations: AiRecommendation[]; summary: string; generatedAt: string };
 
 const PRIORITY_LABEL: Record<string, string> = {
   BRAND: 'Бренд',
@@ -83,49 +87,118 @@ export default function ProjectDetailPage() {
 function MultiPlatformChart({
   ytDaily,
   igSeries,
+  metaDaily,
+  yandexDaily,
+  metric,
+  onMetricChange,
 }: {
   ytDaily: Array<{ day: string; views: number }>;
   igSeries: Array<{ metricKey: string; value: number; capturedAt: string }>;
+  metaDaily: MetaDaily;
+  yandexDaily: YandexDaily;
+  metric: 'views' | 'leads';
+  onMetricChange: (m: 'views' | 'leads') => void;
 }) {
   const ytMap = new Map(ytDaily.map((d) => [d.day.slice(0, 10), d.views]));
   const igMap = new Map(
     igSeries
-      .filter((s) => s.metricKey === 'impressions')
+      .filter((s) => s.metricKey === 'views_28d')
       .map((s) => [s.capturedAt.slice(0, 10), s.value]),
   );
+  const metaViewsMap = new Map(metaDaily.map((d) => [d.date, d.impressions]));
+  const metaLeadsMap = new Map(metaDaily.map((d) => [d.date, d.leads]));
+  const yandexMap = new Map(yandexDaily.map((d) => [d.date, d.visits]));
+  const yandexMax = yandexMap.size > 0
+    ? Math.ceil(Math.max(...Array.from(yandexMap.values())) * 1.15 / 500) * 500
+    : 5000;
 
-  const allDays = [...new Set([...ytMap.keys(), ...igMap.keys()])].sort();
+  const allDays = metric === 'views'
+    ? [...new Set([...ytMap.keys(), ...igMap.keys(), ...metaViewsMap.keys(), ...yandexMap.keys()])].sort()
+    : [...metaLeadsMap.keys()].sort();
 
   if (allDays.length === 0) {
     return (
       <div className="border border-border rounded-xl p-8 text-center text-sm text-muted-foreground bg-background">
-        Подключите YouTube или Instagram в «Настройках» для просмотра динамики.
+        Подключите YouTube, Instagram или Meta Ads в «Настройках» для просмотра динамики.
       </div>
     );
   }
 
-  const data = allDays.map((day) => ({
-    day: new Date(day).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' }),
-    YouTube: ytMap.get(day) ?? null,
-    Instagram: igMap.get(day) ?? null,
-  }));
+  const data = allDays.map((day) => {
+    const label = new Date(day).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' });
+    if (metric === 'leads') {
+      return { day: label, 'Meta Лиды': metaLeadsMap.get(day) ?? null };
+    }
+    return {
+      day: label,
+      YouTube: ytMap.get(day) ?? null,
+      Instagram: igMap.get(day) ?? null,
+      'Meta Ads': metaViewsMap.get(day) ?? null,
+      'Яндекс': yandexMap.get(day) ?? null,
+    };
+  });
 
   return (
-    <div className="border border-border rounded-xl p-4 bg-background">
-      <ResponsiveContainer width="100%" height={220}>
-        <LineChart data={data} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+    <div className="border border-border rounded-xl p-4 bg-background space-y-3">
+      <div className="flex gap-2">
+        <button
+          onClick={() => onMetricChange('views')}
+          className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${metric === 'views' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}
+        >
+          Просмотры
+        </button>
+        <button
+          onClick={() => onMetricChange('leads')}
+          className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${metric === 'leads' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}
+        >
+          Лиды
+        </button>
+      </div>
+      <ResponsiveContainer width="100%" height={240}>
+        <LineChart data={data} margin={{ top: 4, right: 50, left: -20, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.1)" />
           <XAxis dataKey="day" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
-          <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(v) => v >= 1000 ? `${Math.round(v / 1000)}K` : v} />
+          {/* Левая ось — Meta Ads, YouTube (крупные значения) */}
+          <YAxis
+            yAxisId="left"
+            tick={{ fontSize: 10 }}
+            tickLine={false}
+            axisLine={false}
+            tickFormatter={(v: number) => v >= 1000 ? `${Math.round(v / 1000)}K` : String(v)}
+          />
+          {/* Правая ось — Яндекс с независимым масштабом */}
+          {metric === 'views' && yandexMap.size > 0 && (
+            <YAxis
+              yAxisId="right"
+              orientation="right"
+              domain={[0, yandexMax]}
+              allowDataOverflow={false}
+              tick={{ fontSize: 10, fill: '#FFCC00' }}
+              tickLine={false}
+              axisLine={false}
+              tickFormatter={(v: number) => v >= 1000 ? `${Math.round(v / 1000)}K` : String(v)}
+              width={40}
+            />
+          )}
           <RechartsTooltip
             contentStyle={{ fontSize: 12, borderRadius: 8 }}
             formatter={(val: number, name: string) => [formatNumber(val), name]}
           />
           <Legend wrapperStyle={{ fontSize: 12 }} />
-          {ytMap.size > 0 && (
-            <Line type="monotone" dataKey="YouTube" stroke="#EF4444" strokeWidth={2} dot={false} connectNulls />
+          {metric === 'views' && ytMap.size > 0 && (
+            <Line yAxisId="left" type="monotone" dataKey="YouTube" stroke="#EF4444" strokeWidth={2} dot={false} connectNulls />
           )}
-          {igMap.size > 0 && (
-            <Line type="monotone" dataKey="Instagram" stroke="#A855F7" strokeWidth={2} dot={false} connectNulls />
+          {metric === 'views' && igMap.size > 0 && (
+            <Line yAxisId="left" type="monotone" dataKey="Instagram" stroke="#A855F7" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+          )}
+          {metric === 'views' && metaViewsMap.size > 0 && (
+            <Line yAxisId="left" type="monotone" dataKey="Meta Ads" stroke="#3B82F6" strokeWidth={2} dot={false} connectNulls />
+          )}
+          {metric === 'views' && yandexMap.size > 0 && (
+            <Line yAxisId="right" type="monotone" dataKey="Яндекс" stroke="#FFCC00" strokeWidth={2} dot={false} connectNulls />
+          )}
+          {metric === 'leads' && metaLeadsMap.size > 0 && (
+            <Line yAxisId="left" type="monotone" dataKey="Meta Лиды" stroke="#3B82F6" strokeWidth={2} dot={false} connectNulls />
           )}
         </LineChart>
       </ResponsiveContainer>
@@ -143,10 +216,16 @@ function ProjectDetailContent() {
   const [openVideo, setOpenVideo] = useState<YoutubeVideo | null>(null);
   const [ytPpId, setYtPpId] = useState<string>('');
 
+  const [metaInsights, setMetaInsights] = useState<AdInsights | null>(null);
   const [metaLeads, setMetaLeads] = useState<number>(0);
   const [metricaLeads, setMetricaLeads] = useState<number>(0);
   const [bitrixWon, setBitrixWon] = useState<number>(0);
   const [bitrixActive, setBitrixActive] = useState<number>(0);
+  const [metaDaily, setMetaDaily] = useState<MetaDaily>([]);
+  const [yandexDaily, setYandexDaily] = useState<YandexDaily>([]);
+  const [chartMetric, setChartMetric] = useState<'views' | 'leads'>('views');
+  const [aiInsights, setAiInsights] = useState<AiInsights | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
 
   const { period } = usePeriod();
   const periodLabel = PERIODS.find((p) => p.value === period)?.label ?? period;
@@ -181,16 +260,21 @@ function ProjectDetailContent() {
       })
       .catch((e) => setError((e as Error).message));
 
-    // KPI data: leads + Bitrix
+    // KPI data: leads + Bitrix pipeline + Meta daily chart + Yandex daily
     Promise.all([
       apiFetch<AdInsights>('/integrations/meta/ads/insights?datePreset=last_28d', { token }).catch(() => null),
       apiFetch<LeadBreakdown>('/integrations/yandex-metrica/leads?datePreset=last_28d', { token }).catch(() => null),
-      apiFetch<{ summary: FunnelSummary }>('/bitrix/funnel?days=90', { token }).catch(() => null),
-    ]).then(([meta, metrica, bitrix]) => {
+      apiFetch<PipelineFunnel>('/bitrix/pipeline-funnel?days=90', { token }).catch(() => null),
+      apiFetch<MetaDaily>('/integrations/meta/ads/insights-daily?datePreset=last_28d', { token }).catch(() => null),
+      apiFetch<YandexDaily>('/integrations/yandex-metrica/visits-daily?datePreset=last_28d', { token }).catch(() => null),
+    ]).then(([meta, metrica, bitrix, metaDailyData, yandexDailyData]) => {
+      if (meta) setMetaInsights(meta);
       setMetaLeads(meta?.leads ?? 0);
       setMetricaLeads(metrica?.total ?? 0);
-      setBitrixWon(bitrix?.summary?.won ?? 0);
-      setBitrixActive(bitrix?.summary?.inProgress ?? 0);
+      setBitrixWon(bitrix?.won ?? 0);
+      setBitrixActive(bitrix?.inProgress ?? 0);
+      if (metaDailyData) setMetaDaily(metaDailyData);
+      if (yandexDailyData) setYandexDaily(yandexDailyData);
     });
   }, [slug, period]);
 
@@ -204,11 +288,20 @@ function ProjectDetailContent() {
   const yt = data.platforms.YOUTUBE;
   const ig = data.platforms.INSTAGRAM;
 
-  const totalViews = (yt?.metrics?.views_28d ?? 0) + (ig?.metrics?.impressions ?? 0);
-  const totalSubs = (yt?.metrics?.subscribers_total ?? 0) + (ig?.metrics?.followers ?? 0);
+  const metaImpressions = metaDaily.reduce((s, d) => s + d.impressions, 0);
+  const yandexVisits = yandexDaily.reduce((s, d) => s + d.visits, 0);
+  const totalViews =
+    (yt?.metrics?.views_28d ?? 0)
+    + (ig?.metrics?.views_28d ?? 0)
+    + metaImpressions
+    + yandexVisits;
+  const totalSubs =
+    (yt?.metrics?.subscribers_total ?? 0)
+    + (ig?.metrics?.followers_count ?? 0);
   const totalInteractions =
-    (yt?.metrics?.likes_28d ?? 0) + (yt?.metrics?.comments_28d ?? 0) +
-    (ig?.metrics?.likes ?? 0) + (ig?.metrics?.comments ?? 0);
+    (ig?.metrics?.total_interactions_28d ?? 0)
+    + (yt?.metrics?.likes_28d ?? 0)
+    + (yt?.metrics?.comments_28d ?? 0);
   const totalLeads = metaLeads + metricaLeads;
   const totalVideos = yt?.metrics?.videos_total ?? 0;
   const avgRetention = yt?.metrics?.avg_view_percentage_28d ?? 0;
@@ -283,6 +376,10 @@ function ProjectDetailContent() {
         <MultiPlatformChart
           ytDaily={detail?.daily_views ?? []}
           igSeries={ig?.series ?? []}
+          metaDaily={metaDaily}
+          yandexDaily={yandexDaily}
+          metric={chartMetric}
+          onMetricChange={setChartMetric}
         />
       </section>
 
@@ -292,22 +389,78 @@ function ProjectDetailContent() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <PlatformCard platform="YOUTUBE" data={data.platforms.YOUTUBE as any} />
           <PlatformCard platform="INSTAGRAM" data={data.platforms.INSTAGRAM as any} />
-          {/* Meta Ads — ссылка на раздел рекламы */}
-          <Link href="/ads" className="block">
-            <div className="border border-border rounded-xl p-4 bg-background hover:bg-muted/30 transition-colors flex items-center gap-4">
-              <div className="size-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                <Megaphone className="size-5 text-primary" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold text-sm">Meta Ads</div>
-                <div className="text-xs text-muted-foreground">
-                  {metaLeads > 0 ? `${formatNumber(metaLeads)} лидов за 28 дней` : 'Реклама в Facebook / Instagram'}
-                </div>
-              </div>
-              <ArrowLeft className="size-4 text-muted-foreground rotate-180" />
-            </div>
-          </Link>
+          <MetaAdsCard insights={metaInsights} kztRate={metaInsights?.kztRate ?? 460} />
         </div>
+      </section>
+
+      {/* AI Webvisor рекомендации */}
+      <section>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <Sparkles className="size-5 text-primary" /> AI-рекомендации по сайту
+          </h2>
+          {!aiInsights && (
+            <button
+              onClick={() => {
+                const token = readCookie('access_token');
+                if (!token) return;
+                setAiLoading(true);
+                apiFetch<AiInsights>('/integrations/yandex-metrica/ai-insights', { token })
+                  .then(setAiInsights)
+                  .catch(() => {})
+                  .finally(() => setAiLoading(false));
+              }}
+              disabled={aiLoading}
+              className="px-4 py-1.5 bg-primary text-primary-foreground rounded-lg text-sm flex items-center gap-2 disabled:opacity-50"
+            >
+              {aiLoading ? <span className="animate-spin inline-block size-3.5 border-2 border-white border-t-transparent rounded-full" /> : <Sparkles className="size-3.5" />}
+              {aiLoading ? 'Анализирую…' : 'Получить рекомендации'}
+            </button>
+          )}
+        </div>
+        {aiInsights ? (
+          <div className="space-y-3">
+            {aiInsights.summary && (
+              <div className="border border-border rounded-xl p-4 bg-muted/30 text-sm flex gap-3">
+                <Info className="size-4 text-primary shrink-0 mt-0.5" />
+                <span>{aiInsights.summary}</span>
+              </div>
+            )}
+            <div className="grid grid-cols-1 gap-3">
+              {aiInsights.recommendations.map((r, i) => (
+                <div key={i} className="border border-border rounded-xl p-4 bg-background space-y-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                      r.priority === 'высокий' ? 'bg-danger/10 text-danger' :
+                      r.priority === 'средний' ? 'bg-warning/10 text-warning' :
+                      'bg-muted text-muted-foreground'
+                    }`}>{r.priority}</span>
+                    <span className="text-xs text-muted-foreground font-mono truncate max-w-[300px]">{r.page}</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="size-4 text-danger shrink-0 mt-0.5" />
+                    <span className="text-sm font-medium">{r.issue}</span>
+                  </div>
+                  <div className="text-sm text-muted-foreground pl-6">{r.recommendation}</div>
+                  <div className="flex items-center gap-2 pl-6">
+                    <TrendingDown className="size-3.5 text-success" />
+                    <span className="text-xs text-success">{r.expectedImpact}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="text-xs text-muted-foreground text-right">
+              Сгенерировано {new Date(aiInsights.generatedAt).toLocaleString('ru-RU')}
+              <button onClick={() => setAiInsights(null)} className="ml-3 underline">Обновить</button>
+            </div>
+          </div>
+        ) : (
+          !aiLoading && (
+            <div className="border border-border rounded-xl p-6 text-center text-sm text-muted-foreground">
+              Нажмите «Получить рекомендации» — Claude проанализирует поведение посетителей и предложит улучшения
+            </div>
+          )
+        )}
       </section>
 
       {/* YouTube детальная аналитика */}
@@ -449,4 +602,63 @@ function readCookie(name: string): string | null {
   if (typeof document === 'undefined') return null;
   const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
   return match ? decodeURIComponent(match[1]) : null;
+}
+
+function MetaAdsCard({ insights, kztRate }: { insights: AdInsights | null; kztRate: number }) {
+  function fmtUsd(n: number) {
+    if (n >= 1000) return `$${(n / 1000).toFixed(1)}K`;
+    return `$${n.toFixed(2)}`;
+  }
+  function fmtBoth(usd: number) {
+    return `${fmtUsd(usd)} / ₸${Math.round(usd * kztRate).toLocaleString('ru-RU')}`;
+  }
+
+  const metrics = insights
+    ? [
+        { label: 'Показы', value: formatNumber(insights.impressions) },
+        { label: 'Охват', value: formatNumber(insights.reach) },
+        { label: 'Клики', value: formatNumber(insights.clicks) },
+        { label: 'CTR', value: `${insights.ctr.toFixed(2)}%` },
+        { label: 'Лиды', value: formatNumber(insights.leads) },
+        { label: 'CPL', value: insights.cpl > 0 ? fmtBoth(insights.cpl) : '—' },
+        { label: 'Расход', value: fmtBoth(insights.spend) },
+        { label: 'ROAS', value: insights.roas > 0 ? `${insights.roas.toFixed(2)}x` : '—' },
+      ]
+    : [];
+
+  return (
+    <div className="border border-border rounded-xl bg-background p-5 space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Megaphone className="size-5 text-blue-500" />
+          <div className="font-semibold">Meta Ads</div>
+        </div>
+        {insights ? (
+          <span className="text-xs flex items-center gap-1 text-success">
+            <TrendingUp className="size-3.5" /> Активно
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground">нет данных</span>
+        )}
+      </div>
+      <div className="text-sm text-muted-foreground">Facebook / Instagram реклама</div>
+      {!insights ? (
+        <div className="text-xs text-muted-foreground py-3">Нет данных за 28 дней</div>
+      ) : (
+        <div className="grid grid-cols-2 gap-3">
+          {metrics.map((m) => (
+            <div key={m.label} className="space-y-0.5">
+              <div className="text-xs text-muted-foreground">{m.label}</div>
+              <div className="font-semibold text-sm">{m.value}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="border-t border-border pt-3">
+        <Link href="/ads" className="text-xs text-primary hover:underline flex items-center gap-1">
+          Подробнее по кампаниям <ArrowLeft className="size-3 rotate-180" />
+        </Link>
+      </div>
+    </div>
+  );
 }

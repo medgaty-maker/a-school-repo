@@ -68,6 +68,11 @@ export class ProjectsService {
     const platformMetrics: Record<string, any> = {};
 
     for (const pp of project.platforms) {
+      if (pp.status !== 'ACTIVE') {
+        platformMetrics[pp.platform] = { projectPlatformId: pp.id, status: pp.status, metrics: {}, series: [] };
+        continue;
+      }
+
       // Последние снапшоты по каждой ключевой метрике
       const latest = await this.prisma.$queryRaw<Array<{ metricKey: string; metricValue: string; capturedAt: Date }>>`
         SELECT DISTINCT ON ("metricKey") "metricKey", "metricValue", "capturedAt"

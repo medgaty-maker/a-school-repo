@@ -21,4 +21,14 @@ export class YandexMetricaController {
   getLeads(@Query('datePreset') datePreset?: string) {
     return this.svc.getLeads(datePreset ?? 'last_28d');
   }
+
+  @Get('visits-daily')
+  getDailyVisits(@Query('datePreset') datePreset?: string) {
+    return this.svc.getDailyVisits(datePreset ?? 'last_28d');
+  }
+
+  @Get('ai-insights')
+  getAiInsights() {
+    return this.svc.getAiInsights();
+  }
 }

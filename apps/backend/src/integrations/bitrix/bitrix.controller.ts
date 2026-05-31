@@ -53,4 +53,14 @@ export class BitrixController {
   stagesBreakdown(@Query('days') days?: string) {
     return this.bitrix.getStagesBreakdown(days ? parseInt(days, 10) : 90);
   }
+
+  @Get('pipeline-funnel')
+  pipelineFunnel(@Query('days') days?: string) {
+    return this.bitrix.getPipelineFunnel(days ? parseInt(days, 10) : 90);
+  }
+
+  @Get('pipeline-stages')
+  pipelineStages(@Query('days') days?: string) {
+    return this.bitrix.getPipelineStages(days ? parseInt(days, 10) : 90);
+  }
 }
