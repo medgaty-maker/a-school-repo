@@ -56,18 +56,21 @@ function OverviewContent() {
     setToken(t);
     if (!t) return;
     const token = t;
+    // Период → параметры запросов (чтобы карты следовали глобальному селектору)
+    const days = PERIODS.find((p) => p.value === period)?.days ?? 30;
+    const datePreset = periodToDatePreset(period);
     // Параллельно тянем агрегат дневной активности и Bitrix
     apiFetch<Array<{ day: string; views: number }>>('/integrations/youtube/aggregate-daily', { token })
       .then(setAggregateDaily)
       .catch(console.error);
-    apiFetch<{ stages: Array<{ stageId: string; stageName: string; count: number; isWon: boolean; isLost: boolean }>; summary: { total: number; won: number; conversionRate: number } }>('/bitrix/funnel', { token })
+    apiFetch<{ stages: Array<{ stageId: string; stageName: string; count: number; isWon: boolean; isLost: boolean }>; summary: { total: number; won: number; conversionRate: number } }>(`/bitrix/funnel?days=${days}`, { token })
       .then((f) => { setBitrixSummary(f.summary); setBitrixStages(f.stages); })
       .catch(() => null);
     apiFetch<{ configured: boolean }>('/integrations/meta/status', { token })
       .then((s) => {
         setMetaConfigured(s.configured);
         if (s.configured) {
-          apiFetch<{ spend: number; cpl: number; leads: number }>('/integrations/meta/ads/insights?datePreset=last_28d', { token })
+          apiFetch<{ spend: number; cpl: number; leads: number }>(`/integrations/meta/ads/insights?datePreset=${datePreset}`, { token })
             .then(setMetaInsights)
             .catch(() => null);
         }
@@ -141,7 +144,7 @@ function OverviewContent() {
             value={bitrixSummary?.total ?? null}
             pending={bitrixSummary === null}
             pendingNote="Подключите Bitrix24 в «Настройках»"
-            hint={bitrixSummary ? 'за 30 дней' : undefined}
+            hint={bitrixSummary ? `за ${periodLabel.toLowerCase()}` : undefined}
             icon={<UserPlus className="size-4" />}
             status={bitrixSummary && bitrixSummary.total > 0 ? 'good' : 'neutral'}
           />
@@ -150,7 +153,7 @@ function OverviewContent() {
             value={metaInsights?.cpl ?? null}
             pending={!metaConfigured}
             pendingNote="Подключите Meta Ads в «Настройках»"
-            hint={metaInsights ? `${metaInsights.leads} лидов за 28 дней` : undefined}
+            hint={metaInsights ? `${metaInsights.leads} лидов за ${periodLabel.toLowerCase()}` : undefined}
             icon={<DollarSign className="size-4" />}
             status={metaInsights && metaInsights.cpl > 0 ? 'good' : 'neutral'}
           />
@@ -168,7 +171,7 @@ function OverviewContent() {
             value={metaInsights?.spend ?? null}
             pending={!metaConfigured}
             pendingNote="Подключите Meta Ads в «Настройках»"
-            hint={metaInsights ? 'за 28 дней' : undefined}
+            hint={metaInsights ? `за ${periodLabel.toLowerCase()}` : undefined}
             icon={<Megaphone className="size-4" />}
             status={metaInsights && metaInsights.spend > 0 ? 'good' : 'neutral'}
           />
@@ -178,7 +181,7 @@ function OverviewContent() {
       {/* §6.3 — Тренды */}
       <section>
         <TrendChart
-          title="Тренды — просмотры YouTube по проектам (30 дней)"
+          title={`Тренды — просмотры YouTube по проектам · ${periodLabel.toLowerCase()}`}
           series={allMetrics
             .filter((m) => (m.platforms.YOUTUBE?.series ?? []).length > 0)
             .slice(0, 5)
@@ -313,6 +316,19 @@ function OverviewContent() {
       )}
     </div>
   );
+}
+
+// Период дашборда → Meta Ads datePreset (ближайшее допустимое значение Meta)
+function periodToDatePreset(period: string): string {
+  switch (period) {
+    case 'today': return 'today';
+    case 'yesterday': return 'yesterday';
+    case '7d': return 'last_7d';
+    case '30d': return 'last_30d';
+    case 'quarter': return 'last_90d';
+    case 'year': return 'this_year';
+    default: return 'last_30d';
+  }
 }
 
 function readCookie(name: string): string | null {

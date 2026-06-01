@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import {
   Globe, ExternalLink, AlertTriangle, Users, MousePointerClick,
   TrendingUp, BarChart3, ArrowUpRight, Map,
@@ -158,12 +159,20 @@ function MetricCard({ icon, label, value }: { icon: React.ReactNode; label: stri
 }
 
 function ConnectButton() {
+  const [show, setShow] = useState(false);
   return (
-    <button
-      onClick={() => alert('Подключение GA4 планируется в Этапе 5. Добавьте GA4_PROPERTY_ID и GA4_SERVICE_ACCOUNT_KEY в .env.')}
-      className="flex items-center gap-2 px-4 py-2 border border-border rounded-md text-sm hover:bg-muted transition-colors"
-    >
-      <Globe className="size-4" /> Подключить GA4
-    </button>
+    <div className="flex flex-col items-end gap-2">
+      <button
+        onClick={() => setShow((s) => !s)}
+        className="flex items-center gap-2 px-4 py-2 border border-border rounded-md text-sm hover:bg-muted transition-colors"
+      >
+        <Globe className="size-4" /> Подключить GA4
+      </button>
+      {show && (
+        <p className="text-xs text-muted-foreground bg-muted rounded-md px-3 py-2 max-w-sm text-right">
+          Подключение GA4 планируется в Этапе 5. Добавьте <code className="font-mono">GA4_PROPERTY_ID</code> и <code className="font-mono">GA4_SERVICE_ACCOUNT_KEY</code> в .env.
+        </p>
+      )}
+    </div>
   );
 }

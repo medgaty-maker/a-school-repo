@@ -25,6 +25,14 @@ function fmtTick(v: number): string {
   return String(v);
 }
 
+// Безопасный формат даты: при невалидном значении возвращаем '' вместо "Invalid Date"
+// (recharts может вызвать форматтер с неожиданным значением до готовности данных)
+function fmtDate(v: unknown, opts: Intl.DateTimeFormatOptions): string {
+  if (v == null) return '';
+  const d = new Date(v as string);
+  return isNaN(d.getTime()) ? '' : d.toLocaleDateString('ru-RU', opts);
+}
+
 export function TrendChart({ title, series, height = 300, emptyMessage }: Props) {
   const nonEmpty = series.filter((s) => s.data.length > 0);
   const allEmpty = nonEmpty.length === 0;
@@ -98,9 +106,7 @@ export function TrendChart({ title, series, height = 300, emptyMessage }: Props)
                 tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
                 tickLine={false}
                 axisLine={false}
-                tickFormatter={(v) =>
-                  new Date(v).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' })
-                }
+                tickFormatter={(v) => fmtDate(v, { day: '2-digit', month: 'short' })}
                 interval="preserveStartEnd"
               />
               <YAxis
@@ -130,9 +136,7 @@ export function TrendChart({ title, series, height = 300, emptyMessage }: Props)
                   backgroundColor: 'hsl(var(--background))',
                   color: 'hsl(var(--foreground))',
                 }}
-                labelFormatter={(v) =>
-                  new Date(v as string).toLocaleDateString('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' })
-                }
+                labelFormatter={(v) => fmtDate(v, { day: '2-digit', month: 'long', year: 'numeric' })}
                 formatter={(value: number, name: string) => [formatNumber(value), name]}
               />
               <Legend

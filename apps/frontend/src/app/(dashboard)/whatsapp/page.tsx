@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import {
   MessageSquare, ExternalLink, AlertTriangle, Clock, Users,
   TrendingUp, PhoneCall, CheckCircle2,
@@ -47,6 +48,7 @@ const MOCK_SOURCES = [
 ];
 
 export default function WhatsAppPage() {
+  const [connectMsg, setConnectMsg] = useState<string | null>(null);
   return (
     <div className="p-6 space-y-6">
       <header className="flex items-start justify-between gap-4 flex-wrap">
@@ -81,6 +83,11 @@ export default function WhatsAppPage() {
       {/* Integrators */}
       <div>
         <h2 className="font-semibold mb-3">Выберите интегратора</h2>
+        {connectMsg && (
+          <div className="mb-3 text-sm text-muted-foreground bg-muted rounded-lg px-4 py-3">
+            {connectMsg}
+          </div>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {INTEGRATORS.map((int) => (
             <div
@@ -105,7 +112,7 @@ export default function WhatsAppPage() {
               </div>
               <p className="text-xs text-muted-foreground">{int.desc}</p>
               <button
-                onClick={() => alert(`Подключение ${int.name} — добавьте WHATSAPP_API_KEY в .env и перезапустите сервер.`)}
+                onClick={() => setConnectMsg(`Подключение ${int.name}: добавьте WHATSAPP_API_KEY в .env и перезапустите сервер.`)}
                 className="mt-3 text-xs px-3 py-1.5 border border-border rounded-md hover:bg-muted transition-colors"
               >
                 Подключить

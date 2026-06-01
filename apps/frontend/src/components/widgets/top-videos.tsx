@@ -63,23 +63,31 @@ export function TopVideos({ token, limit = 5, mode = 'top' }: Props) {
       ) : (
         <div className="space-y-2">
           {videos?.map((v) => (
-            <a
+            <div
               key={v.id}
-              href={`https://youtu.be/${v.id}`}
-              target="_blank"
-              rel="noreferrer"
               className="flex gap-3 p-2 -m-2 rounded-md hover:bg-muted/40 transition"
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={v.thumbnail} alt="" className="w-32 h-20 object-cover rounded shrink-0" />
+              <a
+                href={`https://youtu.be/${v.id}`}
+                target="_blank"
+                rel="noreferrer"
+                className="shrink-0"
+                title="Открыть на YouTube"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={v.thumbnail} alt="" className="w-32 h-20 object-cover rounded" />
+              </a>
               <div className="flex-1 min-w-0">
-                <div className="font-medium line-clamp-2 leading-tight">{v.title}</div>
+                <a
+                  href={`https://youtu.be/${v.id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block font-medium line-clamp-2 leading-tight hover:text-primary"
+                >
+                  {v.title}
+                </a>
                 <div className="text-xs text-muted-foreground mt-1">
-                  <Link
-                    href={`/projects/${v.projectSlug}`}
-                    onClick={(e) => e.stopPropagation()}
-                    className="hover:text-primary"
-                  >
+                  <Link href={`/projects/${v.projectSlug}`} className="hover:text-primary">
                     {v.projectName}
                   </Link>
                   {v.channelTitle && ` · ${v.channelTitle}`}
@@ -99,7 +107,7 @@ export function TopVideos({ token, limit = 5, mode = 'top' }: Props) {
                   </span>
                 </div>
               </div>
-            </a>
+            </div>
           ))}
         </div>
       )}

@@ -8,6 +8,7 @@ interface BitrixDealRaw {
   ID: string;
   TITLE: string;
   STAGE_ID: string;
+  STAGE_SEMANTIC_ID?: string; // 'S' = успех (won), 'F' = провал (lost), 'P' = в работе
   IS_WON?: string;
   CATEGORY_ID?: string;
   SOURCE_ID?: string;
@@ -110,8 +111,12 @@ export class BitrixService {
 
       for (const d of deals) {
         try {
-          const isWon = d.IS_WON === 'Y';
-          const isLost = !isWon && /LOSE|LOST|UC_LOSE/i.test(d.STAGE_ID);
+          // Bitrix не возвращает рабочий IS_WON в crm.deal.list — признак выигрыша/
+          // проигрыша берём из STAGE_SEMANTIC_ID ('S'=успех, 'F'=провал, 'P'=в работе).
+          // Фолбэк на старую логику для совместимости, если поле не пришло.
+          const semantic = d.STAGE_SEMANTIC_ID;
+          const isWon = semantic ? semantic === 'S' : d.IS_WON === 'Y';
+          const isLost = semantic ? semantic === 'F' : /LOSE|LOST|UC_LOSE/i.test(d.STAGE_ID);
 
           await this.prisma.bitrixDeal.upsert({
             where: { bitrixId: parseInt(d.ID) },
@@ -206,7 +211,7 @@ export class BitrixService {
 
     for (const d of deals) {
       const key = d.stageId;
-      const name = d.stageName ?? d.stageId;
+      const name = this.humanizeStage(d.stageId, d.stageName, d.isWon, d.isLost);
       if (!stageMap.has(key)) stageMap.set(key, { count: 0, amount: 0, stageName: name, isWon: d.isWon, isLost: d.isLost });
       const entry = stageMap.get(key)!;
       entry.count++;
@@ -308,7 +313,7 @@ export class BitrixService {
           order: { DATE_CREATE: 'DESC' },
           filter: { '>=DATE_CREATE': since },
           select: [
-            'ID', 'TITLE', 'STAGE_ID', 'IS_WON', 'CATEGORY_ID', 'SOURCE_ID',
+            'ID', 'TITLE', 'STAGE_ID', 'STAGE_SEMANTIC_ID', 'IS_WON', 'CATEGORY_ID', 'SOURCE_ID',
             'UTM_SOURCE', 'UTM_MEDIUM', 'UTM_CAMPAIGN', 'UTM_CONTENT',
             'ASSIGNED_BY_ID', 'OPPORTUNITY', 'CURRENCY_ID',
             'DATE_CREATE', 'DATE_MODIFY', 'CLOSEDATE',
@@ -351,15 +356,45 @@ export class BitrixService {
     };
   }
 
+  // Читаемое имя стадии. Если из Bitrix пришло нормальное имя — используем его.
+  // Иначе (в БД сохранён сырой код вроде UC_LOSE_DATES) — собираем читаемый ярлык.
+  private humanizeStage(stageId: string, stageName: string | null, isWon: boolean, isLost: boolean): string {
+    if (stageName && stageName !== stageId) return stageName;
+    if (isWon) return 'Сделка успешна';
+    const base = stageId
+      .replace(/^C\d+:/i, '')   // префикс воронки, напр. "C1:"
+      .replace(/^UC_/i, '')     // префикс кастомного статуса
+      .replace(/_/g, ' ')
+      .trim()
+      .toLowerCase();
+    const pretty = base ? base.charAt(0).toUpperCase() + base.slice(1) : stageId;
+    return isLost ? `Отказ — ${pretty}` : pretty;
+  }
+
   private async fetchStages(webhookUrl: string): Promise<BitrixStage[]> {
-    const res = await fetch(`${webhookUrl}crm.deal.stage.list.json`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    });
-    if (!res.ok) return [];
-    const data = (await res.json()) as { result?: BitrixStage[] };
-    return data.result ?? [];
+    // crm.deal.stage.list — стадии воронок;
+    // crm.status.list — ВСЕ статусы, включая кастомные причины отказа (UC_LOSE_*),
+    // которых нет в stage.list. Объединяем, чтобы у каждого STAGE_ID было имя.
+    const post = (method: string, body: unknown) =>
+      fetch(`${webhookUrl}${method}.json`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+        .then((r) => (r.ok ? r.json() : { result: [] }))
+        .then((d) => ((d as { result?: BitrixStage[] }).result ?? []))
+        .catch(() => [] as BitrixStage[]);
+
+    const [stageList, statusList] = await Promise.all([
+      post('crm.deal.stage.list', {}),
+      post('crm.status.list', {}),
+    ]);
+
+    const merged = new Map<string, string>();
+    // Сначала общий список статусов, затем стадии воронок (приоритетнее) перетирают
+    for (const s of statusList) if (s.STATUS_ID && s.NAME) merged.set(s.STATUS_ID, s.NAME);
+    for (const s of stageList) if (s.STATUS_ID && s.NAME) merged.set(s.STATUS_ID, s.NAME);
+    return Array.from(merged.entries()).map(([STATUS_ID, NAME]) => ({ STATUS_ID, NAME }));
   }
 
   private async fetchCategories(webhookUrl: string): Promise<BitrixCategory[]> {

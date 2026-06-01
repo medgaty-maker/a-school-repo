@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────
-# start.sh — запустить дашборд (сайт на :3000, API на :4000)
+# start.sh — запустить дашборд ЛОКАЛЬНО (сайт на :3100, API на :4100)
+#
+# Локальный контур разработки: фронт и бэк общаются через localhost.
+# Адрес API для фронта берётся из apps/frontend/.env.local.
+# Боевой конфиг — в .env.production (домен aschool.heycontent.online),
+# деплоится отдельно на боевой сервер.
 #
 # Что делает по шагам:
 #   1. Проверяет .env
@@ -10,8 +15,8 @@
 #   5. Применяет новые миграции БД
 #   6. Создаёт начальные данные если БД пустая
 #   7. Убивает старые backend/frontend процессы
-#   8. Запускает backend (NestJS REST API) на порту 4000
-#   9. Запускает frontend (Next.js) на порту 3000
+#   8. Запускает backend (NestJS REST API) на порту 4100
+#   9. Запускает frontend (Next.js) на порту 3100
 #  10. Ждёт пока оба поднимутся и выводит ссылки
 # ─────────────────────────────────────────────────────────────
 set -e
@@ -21,6 +26,11 @@ ROOT="$SCRIPT_DIR/.."
 BACKEND="$ROOT/apps/backend"
 FRONTEND="$ROOT/apps/frontend"
 LOG_DIR="$ROOT/.logs"
+
+# Порты локального контура (совпадают с .env BACKEND_PORT и frontend dev-скриптом)
+BACKEND_PORT=$(grep -E '^BACKEND_PORT=' "$ROOT/.env" 2>/dev/null | cut -d= -f2 | tr -d ' ')
+BACKEND_PORT=${BACKEND_PORT:-4100}
+FRONTEND_PORT=3100
 
 mkdir -p "$LOG_DIR"
 
@@ -38,7 +48,7 @@ echo ""
 
 # 1. Проверяем .env — без него ничего не заработает
 [ -f "$ROOT/.env" ] || die ".env не найден. Скопируйте: cp .env.example .env"
-ok ".env найден"
+ok ".env найден (локальный контур, API :$BACKEND_PORT)"
 
 # 2. PostgreSQL — основная база данных
 if pg_isready -q 2>/dev/null; then
@@ -90,65 +100,45 @@ fi
 # 7. Убиваем старые процессы, чтобы не было конфликта портов
 info "Останавливаю предыдущие процессы..."
 pkill -f "ts-node.*backend/src/main" 2>/dev/null || true
+pkill -f "nest start" 2>/dev/null || true
 pkill -f "next-server\|next dev" 2>/dev/null || true
+# на случай если от старой схемы остались туннели
 pkill -f "ngrok" 2>/dev/null || true
 pkill -f "cloudflared" 2>/dev/null || true
 sleep 1
 
-# Гарантируем что NEXT_PUBLIC_API_URL указывает на ngrok (для внешнего доступа)
-NGROK_DOMAIN="pseudoindependently-skittish-hilton.ngrok-free.dev"
-echo "NEXT_PUBLIC_API_URL=https://${NGROK_DOMAIN}" > "$FRONTEND/.env.local"
+# Проверяем что фронт настроен на локальный бэк (а не на боевой домен)
+if ! grep -q "localhost:${BACKEND_PORT}" "$FRONTEND/.env.local" 2>/dev/null; then
+  warn "apps/frontend/.env.local не указывает на localhost:${BACKEND_PORT} — фронт может ходить в боевой бэк"
+fi
 
-# 8. Backend — NestJS REST API, слушает порт 4000
-info "Запускаю backend (NestJS :4000)..."
+# 8. Backend — NestJS REST API, слушает порт $BACKEND_PORT
+info "Запускаю backend (NestJS :$BACKEND_PORT)..."
 cd "$BACKEND"
 nohup npx ts-node -r tsconfig-paths/register src/main.ts > "$LOG_DIR/backend.log" 2>&1 &
 echo $! > "$LOG_DIR/backend.pid"
 for i in $(seq 1 15); do
-  curl -s http://localhost:4000/api/auth/login -o /dev/null 2>/dev/null && break
+  curl -s "http://localhost:${BACKEND_PORT}/api/auth/login" -o /dev/null 2>/dev/null && break
   sleep 1
 done
-curl -s http://localhost:4000/api/auth/login -o /dev/null 2>/dev/null \
+curl -s "http://localhost:${BACKEND_PORT}/api/auth/login" -o /dev/null 2>/dev/null \
   && ok "Backend запущен (PID $(cat "$LOG_DIR/backend.pid"))" \
   || warn "Backend не ответил за 15 сек → tail -f .logs/backend.log"
 
-# 9. Frontend — Next.js, слушает порт 3000 (то что открываете в браузере)
-info "Запускаю frontend (Next.js :3000)..."
+# 9. Frontend — Next.js, слушает порт $FRONTEND_PORT (то что открываете в браузере)
+info "Запускаю frontend (Next.js :$FRONTEND_PORT)..."
 cd "$FRONTEND"
 nohup npm run dev > "$LOG_DIR/frontend.log" 2>&1 &
 echo $! > "$LOG_DIR/frontend.pid"
 for i in $(seq 1 20); do
-  curl -s -o /dev/null http://localhost:3000 2>/dev/null && break
+  curl -s -o /dev/null "http://localhost:${FRONTEND_PORT}" 2>/dev/null && break
   sleep 1
 done
-curl -s -o /dev/null http://localhost:3000 2>/dev/null \
+curl -s -o /dev/null "http://localhost:${FRONTEND_PORT}" 2>/dev/null \
   && ok "Frontend запущен (PID $(cat "$LOG_DIR/frontend.pid"))" \
   || warn "Frontend не ответил за 20 сек → tail -f .logs/frontend.log"
 
-# 10. ngrok — HTTPS тоннель для бэкенда (нужен для Instagram OAuth)
-info "Запускаю ngrok (HTTPS тоннель :4000)..."
-nohup ngrok http 3000 --domain="${NGROK_DOMAIN}" > "$LOG_DIR/ngrok.log" 2>&1 &
-echo $! > "$LOG_DIR/ngrok.pid"
-sleep 3
-if curl -s http://127.0.0.1:4040/api/tunnels &>/dev/null; then
-  ok "ngrok запущен → https://${NGROK_DOMAIN}"
-else
-  warn "ngrok не запустился → Instagram OAuth не будет работать"
-fi
-
-# 11. cloudflared — публичный URL для фронтенда (для других пользователей)
-info "Запускаю cloudflared (публичный доступ к :3000)..."
-nohup cloudflared tunnel --url http://localhost:3000 > "$LOG_DIR/cloudflared.log" 2>&1 &
-echo $! > "$LOG_DIR/cloudflared.pid"
-CLOUDFLARE_URL=""
-for i in $(seq 1 15); do
-  CLOUDFLARE_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' "$LOG_DIR/cloudflared.log" 2>/dev/null | head -1)
-  [ -n "$CLOUDFLARE_URL" ] && break
-  sleep 1
-done
-[ -n "$CLOUDFLARE_URL" ] && ok "cloudflared запущен → $CLOUDFLARE_URL" || warn "cloudflared не дал URL"
-
-# 12. Итог
+# 10. Итог
 ADMIN_EMAIL=$(grep ADMIN_EMAIL "$ROOT/.env" | cut -d= -f2 | tr -d ' ')
 ADMIN_PASS=$(grep ADMIN_PASSWORD "$ROOT/.env" | cut -d= -f2 | tr -d ' ')
 echo ""
@@ -156,12 +146,11 @@ echo -e "${GREEN}═════════════════════
 echo -e "${GREEN}  Готово!${NC}"
 echo -e "${GREEN}══════════════════════════════════════════${NC}"
 echo ""
-echo -e "  ${BLUE}Локально:${NC}   http://localhost:3000"
-echo -e "  ${BLUE}Публично:${NC}   ${CLOUDFLARE_URL:-недоступно}"
-echo -e "  ${BLUE}API (ngrok):${NC} https://${NGROK_DOMAIN}"
-echo -e "  ${BLUE}Логин:${NC}      $ADMIN_EMAIL"
-echo -e "  ${BLUE}Пароль:${NC}     $ADMIN_PASS"
+echo -e "  ${BLUE}Сайт:${NC}   http://localhost:${FRONTEND_PORT}"
+echo -e "  ${BLUE}API:${NC}    http://localhost:${BACKEND_PORT}/api"
+echo -e "  ${BLUE}Логин:${NC}  $ADMIN_EMAIL"
+echo -e "  ${BLUE}Пароль:${NC} $ADMIN_PASS"
 echo ""
-echo -e "  Логи:      tail -f .logs/backend.log"
-echo -e "  Стоп:      npm run stop"
+echo -e "  Логи:   tail -f .logs/backend.log"
+echo -e "  Стоп:   npm run stop"
 echo ""

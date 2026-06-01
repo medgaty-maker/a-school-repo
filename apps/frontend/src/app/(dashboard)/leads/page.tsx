@@ -114,7 +114,7 @@ function LeadsContent() {
         apiFetch<Status>('/bitrix/status', { token }),
         apiFetch<FunnelData>(`/bitrix/funnel?days=${days}`, { token }),
         apiFetch<SourceData[]>(`/bitrix/sources?days=${days}`, { token }),
-        apiFetch<Deal[]>(`/bitrix/deals?days=${days}&limit=200`, { token }),
+        apiFetch<Deal[]>(`/bitrix/deals?days=${days}&limit=20`, { token }),
         apiFetch<StagesBreakdownData>(`/bitrix/stages-breakdown?days=${days}`, { token }),
         apiFetch<PipelineStagesData>('/bitrix/pipeline-stages?days=90', { token }).catch(() => null),
       ]);
@@ -150,6 +150,22 @@ function LeadsContent() {
       setSyncing(false);
     }
   };
+
+  // Воронка: показываем только топ-12 стадий по числу сделок (у Bitrix их десятки
+  // по всем направлениям — полный список делал страницу в десятки экранов).
+  const topFunnelStages = (funnel?.stages ?? [])
+    .slice()
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 12)
+    // только нужные поля: если оставить amount (суммы), recharts берёт его в
+    // домен оси значений и бары count'а становятся почти невидимыми
+    .map((s) => ({
+      stageId: s.stageId,
+      stageName: s.stageName?.replace(/^C\d+:/i, '') ?? s.stageId,
+      count: s.count,
+      isWon: s.isWon,
+      isLost: s.isLost,
+    }));
 
   const notConfigured = status && !status.configured;
 
@@ -254,22 +270,22 @@ function LeadsContent() {
       {/* Funnel chart */}
       <section>
         <div className="border border-border rounded-xl bg-background p-5">
-          <h2 className="font-semibold mb-4">Воронка по этапам · {periodLabel}</h2>
+          <h2 className="font-semibold mb-1">Воронка по этапам · {periodLabel}</h2>
+          <p className="text-xs text-muted-foreground mb-4">
+            Топ-12 стадий по числу сделок{funnel && funnel.stages.length > 12 ? ` (из ${funnel.stages.length})` : ''}
+          </p>
           {!funnel || funnel.stages.length === 0 ? (
             <div className="h-48 grid place-items-center text-sm text-muted-foreground">
               Нет данных за выбранный период
             </div>
           ) : (
-            <ResponsiveContainer width="100%" height={Math.max(360, funnel.stages.length * 48)}>
+            <ResponsiveContainer width="100%" height={Math.min(Math.max(300, topFunnelStages.length * 44), 580)}>
               <BarChart
-                data={funnel.stages.map((s) => ({
-                  ...s,
-                  stageName: s.stageName?.replace(/^C\d+:/i, '') ?? s.stageId,
-                }))}
+                data={topFunnelStages}
                 layout="vertical"
                 margin={{ left: 8, right: 48, top: 4, bottom: 4 }}
               >
-                <XAxis type="number" tick={{ fontSize: 12 }} tickLine={false} axisLine={false} />
+                <XAxis type="number" dataKey="count" domain={[0, 'dataMax']} tick={{ fontSize: 12 }} tickLine={false} axisLine={false} />
                 <YAxis
                   type="category"
                   dataKey="stageName"
@@ -283,7 +299,7 @@ function LeadsContent() {
                   cursor={{ fill: 'hsl(var(--muted))' }}
                 />
                 <Bar dataKey="count" radius={[0, 6, 6, 0]} barSize={28} label={{ position: 'right', fontSize: 12, fill: 'hsl(var(--muted-foreground))' }}>
-                  {funnel.stages.map((s, i) => (
+                  {topFunnelStages.map((s, i) => (
                     <Cell key={i} fill={STAGE_COLOR(s)} />
                   ))}
                 </Bar>

@@ -167,7 +167,7 @@ export default function SettingsPage() {
       setMetaMsg(null);
       refresh();
     } catch (e) {
-      alert(`Ошибка: ${(e as Error).message}`);
+      setMetaMsg(`Ошибка: ${(e as Error).message}`);
     }
   }
 
@@ -220,7 +220,7 @@ export default function SettingsPage() {
       setTiktok(null);
       setTiktokMsg(null);
     } catch (e) {
-      alert(`Ошибка: ${(e as Error).message}`);
+      setTiktokMsg(`Ошибка: ${(e as Error).message}`);
     }
   }
 
@@ -281,7 +281,7 @@ export default function SettingsPage() {
       await apiFetch(`/integrations/meta/instagram/oauth/${projectPlatformId}`, { method: 'DELETE', token });
       refresh();
     } catch (e) {
-      alert(`Ошибка: ${(e as Error).message}`);
+      setOauthMsg(`Ошибка: ${(e as Error).message}`);
     }
   }
 
@@ -293,7 +293,7 @@ export default function SettingsPage() {
       await apiFetch(`/integrations/youtube/oauth/${projectPlatformId}`, { method: 'DELETE', token });
       refresh();
     } catch (e) {
-      alert(`Ошибка: ${(e as Error).message}`);
+      setOauthMsg(`Ошибка: ${(e as Error).message}`);
     }
   }
 

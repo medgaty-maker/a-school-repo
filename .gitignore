@@ -10,3 +10,4 @@ coverage/
 .turbo/
 prisma/migrations/dev/
 .logs/
+*.tsbuildinfo
