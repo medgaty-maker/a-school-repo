@@ -300,26 +300,43 @@ export class BitrixService {
     });
   }
 
+  private sleep(ms: number): Promise<void> {
+    return new Promise((r) => setTimeout(r, ms));
+  }
+
+  // POST в Bitrix с ретраями на 429/503 (rate limit) — экспоненциальный backoff
+  private async bitrixPost(url: string, body: unknown, tries = 6): Promise<Response> {
+    for (let i = 0; i < tries; i++) {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (res.status !== 429 && res.status !== 503) return res;
+      const retryAfter = Number(res.headers.get('Retry-After')) || 0;
+      const wait = retryAfter > 0 ? retryAfter * 1000 : Math.min(1500 * 2 ** i, 20000);
+      this.logger.warn(`Bitrix ${res.status} (rate limit), повтор через ${wait}мс (${i + 1}/${tries})`);
+      await this.sleep(wait);
+    }
+    throw new Error('Bitrix API error: 429 (исчерпаны ретраи)');
+  }
+
   private async fetchAllDeals(webhookUrl: string): Promise<BitrixDealRaw[]> {
     const deals: BitrixDealRaw[] = [];
     let start = 0;
     const since = new Date(Date.now() - 365 * 24 * 3600 * 1000).toISOString().split('T')[0];
 
     while (true) {
-      const res = await fetch(`${webhookUrl}crm.deal.list.json`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          order: { DATE_CREATE: 'DESC' },
-          filter: { '>=DATE_CREATE': since },
-          select: [
-            'ID', 'TITLE', 'STAGE_ID', 'STAGE_SEMANTIC_ID', 'IS_WON', 'CATEGORY_ID', 'SOURCE_ID',
-            'UTM_SOURCE', 'UTM_MEDIUM', 'UTM_CAMPAIGN', 'UTM_CONTENT',
-            'ASSIGNED_BY_ID', 'OPPORTUNITY', 'CURRENCY_ID',
-            'DATE_CREATE', 'DATE_MODIFY', 'CLOSEDATE',
-          ],
-          start,
-        }),
+      const res = await this.bitrixPost(`${webhookUrl}crm.deal.list.json`, {
+        order: { DATE_CREATE: 'DESC' },
+        filter: { '>=DATE_CREATE': since },
+        select: [
+          'ID', 'TITLE', 'STAGE_ID', 'STAGE_SEMANTIC_ID', 'IS_WON', 'CATEGORY_ID', 'SOURCE_ID',
+          'UTM_SOURCE', 'UTM_MEDIUM', 'UTM_CAMPAIGN', 'UTM_CONTENT',
+          'ASSIGNED_BY_ID', 'OPPORTUNITY', 'CURRENCY_ID',
+          'DATE_CREATE', 'DATE_MODIFY', 'CLOSEDATE',
+        ],
+        start,
       });
 
       if (!res.ok) throw new Error(`Bitrix API error: ${res.status}`);
@@ -328,6 +345,7 @@ export class BitrixService {
       deals.push(...(data.result ?? []));
       if (!data.next) break;
       start = data.next;
+      await this.sleep(300); // пауза между страницами, чтобы не упираться в rate limit
     }
 
     return deals;
