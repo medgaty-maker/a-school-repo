@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Get, Post, Put, Query, Logger } from '@nestjs/common';
 import { IsString, IsUrl } from 'class-validator';
 import { BitrixService } from './bitrix.service';
 import { Roles } from '../../auth/roles.decorator';
@@ -12,6 +12,7 @@ class SetWebhookDto {
 
 @Controller('bitrix')
 export class BitrixController {
+  private readonly logger = new Logger(BitrixController.name);
   constructor(private readonly bitrix: BitrixService) {}
 
   @Get('status')
@@ -28,7 +29,11 @@ export class BitrixController {
   @Roles(Role.ADMIN, Role.MARKETING_DIRECTOR)
   @Post('sync')
   sync() {
-    return this.bitrix.sync();
+    if (this.bitrix.isSyncing()) return { started: false, running: true };
+    // Запускаем в фоне: синк 29k сделок длится дольше таймаута Cloudflare (524).
+    // Кнопка получает мгновенный ответ, результат смотрим по lastSyncAt / данным.
+    this.bitrix.sync().catch((e) => this.logger.error(`Bitrix sync failed: ${(e as Error).message}`));
+    return { started: true, running: true };
   }
 
   @Get('funnel')

@@ -90,9 +90,19 @@ export class BitrixService {
     }
   }
 
+  private syncing = false;
+  isSyncing(): boolean {
+    return this.syncing;
+  }
+
   async sync(): Promise<{ synced: number; errors: number }> {
+    if (this.syncing) {
+      this.logger.warn('Bitrix sync уже идёт — пропускаю повторный запуск');
+      return { synced: 0, errors: 0 };
+    }
     const webhookUrl = await this.getWebhookUrl();
     if (!webhookUrl) throw new BadRequestException('Bitrix24 webhook not configured');
+    this.syncing = true;
 
     const start = Date.now();
     let synced = 0;
@@ -193,6 +203,8 @@ export class BitrixService {
         },
       });
       throw e;
+    } finally {
+      this.syncing = false;
     }
 
     return { synced, errors };

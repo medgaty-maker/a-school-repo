@@ -138,12 +138,15 @@ function LeadsContent() {
     setSyncing(true);
     setSyncMsg(null);
     try {
-      const r = await apiFetch<{ synced: number; errors: number }>('/bitrix/sync', {
+      const r = await apiFetch<{ started: boolean; running: boolean }>('/bitrix/sync', {
         method: 'POST',
         token,
       });
-      setSyncMsg(`Синхронизировано ${r.synced} сделок`);
-      await load();
+      setSyncMsg(
+        r.started
+          ? 'Синхронизация запущена в фоне. Сделки появятся через 1–3 минуты — обновите страницу.'
+          : 'Синхронизация уже идёт. Обновите страницу через пару минут.',
+      );
     } catch (e) {
       setSyncMsg(`Ошибка: ${(e as Error).message}`);
     } finally {
