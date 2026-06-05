@@ -73,7 +73,7 @@ function readCookie(name: string): string | null {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
-const STAGE_COLOR = (stage: FunnelStage) => {
+const STAGE_COLOR = (stage: { isWon: boolean; isLost: boolean }) => {
   if (stage.isWon) return 'hsl(142 71% 45%)';
   if (stage.isLost) return 'hsl(0 84% 60%)';
   return 'hsl(221 83% 53%)';
