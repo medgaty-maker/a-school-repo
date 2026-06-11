@@ -332,27 +332,10 @@ export class MetaService {
       throw new BadRequestException('Invalid OAuth state');
     }
 
-    // 1. Exchange code → Instagram token; response includes user_id directly
+    // 1. Exchange code → Instagram token
     const shortToken = await this.exchangeCode(code);
 
-    // 2. user_id comes from code exchange; username from /me if available
-    const igUserId = shortToken.user_id || '';
-    if (!igUserId) {
-      throw new BadRequestException('Instagram OAuth did not return user_id');
-    }
-
-    // 3. Fetch username via /{user_id} (instagram_business_basic doesn't support /me)
-    let username = igUserId;
-    try {
-      const uRes = await fetch(`${IG_API_BASE}/${igUserId}?fields=id,username&access_token=${encodeURIComponent(shortToken.access_token)}`);
-      const uData = (await uRes.json()) as { id?: string; username?: string };
-      this.logger.log(`IG user lookup: ${JSON.stringify(uData).slice(0, 200)}`);
-      if (uData.username) username = uData.username;
-    } catch {
-      this.logger.warn('Could not fetch IG username, using user_id as name');
-    }
-
-    // 4. Обмениваем короткоживущий токен (~1 час) на долгоживущий (60 дней).
+    // 2. Обмениваем короткоживущий токен (~1 час) на долгоживущий (60 дней).
     // Без этого токен умирает в тот же день, а статус остаётся ACTIVE.
     let finalToken = shortToken.access_token;
     let expiresAt = new Date(Date.now() + 60 * 24 * 3600 * 1000);
@@ -363,6 +346,26 @@ export class MetaService {
       this.logger.log(`IG long-lived токен получен, expires_in=${ll.expires_in ?? 'n/a'}`);
     } catch (e) {
       this.logger.warn(`IG long-lived обмен не удался, сохраняю короткий токен: ${(e as Error).message}`);
+    }
+
+    // 3. Берём ПРАВИЛЬНЫЙ id аккаунта и username через /me.
+    // user_id из обмена кода — это большое число (> MAX_SAFE_INTEGER), и при
+    // JSON.parse оно теряет точность (последняя цифра округляется) → все запросы
+    // по такому id падают «Object does not exist». /me даёт точный id строкой.
+    let igUserId = String(shortToken.user_id || '');
+    let username = igUserId;
+    try {
+      // graph.instagram.com возвращает id строкой → точность не теряется
+      const meRes = await fetch(`${IG_API_BASE}/me?fields=username&access_token=${encodeURIComponent(finalToken)}`);
+      const me = (await meRes.json()) as { id?: string; username?: string; error?: { message: string } };
+      this.logger.log(`IG /me lookup: ${JSON.stringify(me).slice(0, 200)}`);
+      if (me.id) igUserId = me.id;
+      if (me.username) username = me.username;
+    } catch (e) {
+      this.logger.warn(`IG /me lookup не удался: ${(e as Error).message}`);
+    }
+    if (!igUserId) {
+      throw new BadRequestException('Instagram OAuth did not return user_id');
     }
 
     await this.prisma.projectPlatform.update({
@@ -464,9 +467,9 @@ export class MetaService {
       error?: { message: string };
     };
 
-    // Fallback to graph.instagram.com for IGAA tokens
+    // Fallback to graph.instagram.com for IGAA tokens ('me' — точный аккаунт по токену)
     if (data.error) {
-      res = await fetch(`https://graph.instagram.com/v22.0/${pp.externalAccountId}?fields=${fields}&access_token=${encodedToken}`);
+      res = await fetch(`https://graph.instagram.com/v22.0/me?fields=${fields}&access_token=${encodedToken}`);
       data = (await res.json()) as typeof data;
     }
 
@@ -488,7 +491,9 @@ export class MetaService {
     const pp = await this.prisma.projectPlatform.findUnique({ where: { id: projectPlatformId } });
     if (!pp?.externalAccountId) throw new BadRequestException('Instagram not connected');
 
-    const igId = pp.externalAccountId;
+    // 'me' вместо числового id: id аккаунта мог сохраниться с потерей точности
+    // (большое число), а 'me' всегда резолвится по самому токену.
+    const igId = 'me';
 
     const encodedToken = encodeURIComponent(token);
     const metricsRes = await fetch(
@@ -629,7 +634,9 @@ export class MetaService {
 
     const token = this.crypto.decrypt(pp.accessTokenEnc);
     const encodedToken = encodeURIComponent(token);
-    const igId = pp.externalAccountId;
+    // 'me' вместо числового id: id аккаунта мог сохраниться с потерей точности
+    // (большое число), а 'me' всегда резолвится по самому токену.
+    const igId = 'me';
 
     // Fetch followers count via graph.instagram.com
     let followersCount = 0;
