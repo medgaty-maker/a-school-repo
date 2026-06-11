@@ -709,6 +709,8 @@ export default function SettingsPage() {
         </div>
       </section>
 
+      <SourceMappingSection />
+
       <section className="border border-border rounded-xl p-5 bg-background space-y-2">
         <div className="font-semibold">Остальные подсекции «Настроек»</div>
         <ul className="text-sm text-muted-foreground space-y-1">
@@ -726,4 +728,149 @@ function readCookie(name: string): string | null {
   if (typeof document === 'undefined') return null;
   const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
   return match ? decodeURIComponent(match[1]) : null;
+}
+
+function splitIds(s?: string | null): string[] {
+  return (s ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+}
+
+type MapProject = {
+  id: string; slug: string; name: string;
+  bitrixCategoryIds: string | null;
+  metricaCounterIds: string | null;
+  metaCampaignIds: string | null;
+};
+type BitrixCategory = { categoryId: string; categoryName: string | null; count: number };
+type MetaCampaign = { id: string; name: string };
+type Sel = { bitrix: Set<string>; metrica: Set<string>; meta: Set<string> };
+
+function Chips({ options, selected, onToggle }: {
+  options: Array<{ id: string; label: string }>;
+  selected: Set<string>;
+  onToggle: (id: string) => void;
+}) {
+  if (options.length === 0) return <span className="text-xs text-muted-foreground italic">нет вариантов</span>;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {options.map((o) => (
+        <button
+          key={o.id}
+          type="button"
+          onClick={() => onToggle(o.id)}
+          className={`text-xs px-2 py-1 rounded-full border transition-colors ${
+            selected.has(o.id)
+              ? 'bg-primary text-primary-foreground border-primary'
+              : 'bg-muted text-muted-foreground border-border hover:bg-muted/70'
+          }`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// Привязка источников (Bitrix воронки / Метрика счётчики / Meta кампании) к проектам
+function SourceMappingSection() {
+  const [projects, setProjects] = useState<MapProject[]>([]);
+  const [categories, setCategories] = useState<BitrixCategory[]>([]);
+  const [counters, setCounters] = useState<string[]>([]);
+  const [campaigns, setCampaigns] = useState<MetaCampaign[]>([]);
+  const [sel, setSel] = useState<Record<string, Sel>>({});
+  const [saving, setSaving] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    const token = readCookie('access_token');
+    if (!token) return;
+    apiFetch<MapProject[]>('/projects', { token }).then((ps) => {
+      setProjects(ps);
+      const init: Record<string, Sel> = {};
+      for (const p of ps) {
+        init[p.slug] = {
+          bitrix: new Set(splitIds(p.bitrixCategoryIds)),
+          metrica: new Set(splitIds(p.metricaCounterIds)),
+          meta: new Set(splitIds(p.metaCampaignIds)),
+        };
+      }
+      setSel(init);
+    }).catch(() => {});
+    apiFetch<BitrixCategory[]>('/bitrix/categories', { token }).then(setCategories).catch(() => {});
+    apiFetch<{ counterIds?: string } | null>('/integrations/yandex-metrica/config', { token })
+      .then((c) => setCounters(splitIds(c?.counterIds))).catch(() => {});
+    apiFetch<Array<{ id: string | number; name: string }>>('/integrations/meta/ads/campaigns?datePreset=last_28d', { token })
+      .then((cs) => setCampaigns(cs.map((c) => ({ id: String(c.id), name: c.name })))).catch(() => {});
+  }, []);
+
+  const toggle = (slug: string, group: keyof Sel, id: string) => {
+    setSel((prev) => {
+      const cur = prev[slug] ?? { bitrix: new Set<string>(), metrica: new Set<string>(), meta: new Set<string>() };
+      const next: Sel = { bitrix: new Set(cur.bitrix), metrica: new Set(cur.metrica), meta: new Set(cur.meta) };
+      if (next[group].has(id)) next[group].delete(id); else next[group].add(id);
+      return { ...prev, [slug]: next };
+    });
+  };
+
+  const save = async (slug: string) => {
+    const token = readCookie('access_token');
+    const s = sel[slug];
+    if (!token || !s) return;
+    setSaving(slug); setMsg(null);
+    try {
+      await apiFetch(`/projects/${slug}/sources`, {
+        method: 'PATCH',
+        token,
+        body: JSON.stringify({
+          bitrixCategoryIds: [...s.bitrix].join(','),
+          metricaCounterIds: [...s.metrica].join(','),
+          metaCampaignIds: [...s.meta].join(','),
+        }),
+      });
+      setMsg(`✓ Сохранено: ${slug}`);
+    } catch (e) {
+      setMsg(`Ошибка: ${(e as Error).message}`);
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  return (
+    <section className="border border-border rounded-xl bg-background overflow-hidden">
+      <div className="px-5 py-4 border-b border-border">
+        <div className="font-semibold">Привязка источников к проектам</div>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Какие воронки Bitrix, счётчики Метрики и кампании Meta относятся к проекту. Влияет на Лиды/Записи/Продажи на странице проекта. Пусто = нет данных по источнику (покажет 0).
+        </p>
+        {msg && <p className="text-xs mt-2 text-foreground">{msg}</p>}
+      </div>
+      {projects.map((p) => {
+        const s = sel[p.slug] ?? { bitrix: new Set<string>(), metrica: new Set<string>(), meta: new Set<string>() };
+        return (
+          <div key={p.id} className="border-b border-border last:border-0 px-5 py-4 space-y-3">
+            <div className="font-medium text-sm">{p.name} <span className="text-xs text-muted-foreground">/{p.slug}</span></div>
+            <div>
+              <div className="text-xs text-muted-foreground mb-1">Воронки Bitrix</div>
+              <Chips options={categories.map((c) => ({ id: c.categoryId, label: `${c.categoryName ?? c.categoryId} (${c.count})` }))} selected={s.bitrix} onToggle={(id) => toggle(p.slug, 'bitrix', id)} />
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground mb-1">Счётчики Метрики</div>
+              <Chips options={counters.map((c) => ({ id: c, label: c }))} selected={s.metrica} onToggle={(id) => toggle(p.slug, 'metrica', id)} />
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground mb-1">Кампании Meta</div>
+              <Chips options={campaigns.map((c) => ({ id: c.id, label: c.name }))} selected={s.meta} onToggle={(id) => toggle(p.slug, 'meta', id)} />
+            </div>
+            <button
+              type="button"
+              onClick={() => save(p.slug)}
+              disabled={saving === p.slug}
+              className="text-xs px-4 py-1.5 bg-primary text-primary-foreground rounded-md disabled:opacity-50"
+            >
+              {saving === p.slug ? 'Сохранение…' : 'Сохранить'}
+            </button>
+          </div>
+        );
+      })}
+    </section>
+  );
 }

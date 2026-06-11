@@ -36,32 +36,48 @@ export class BitrixController {
     return { started: true, running: true };
   }
 
+  // Список воронок Bitrix (для UI привязки к проектам)
+  @Get('categories')
+  categories() {
+    return this.bitrix.getCategories();
+  }
+
   @Get('funnel')
-  funnel(@Query('days') days?: string) {
-    return this.bitrix.getFunnel(days ? parseInt(days, 10) : 30);
+  async funnel(@Query('days') days?: string, @Query('project') project?: string) {
+    const cat = await this.bitrix.resolveProjectCategoryIds(project);
+    return this.bitrix.getFunnel(days ? parseInt(days, 10) : 30, cat);
   }
 
   @Get('sources')
-  sources(@Query('days') days?: string) {
-    return this.bitrix.getSources(days ? parseInt(days, 10) : 30);
+  async sources(@Query('days') days?: string, @Query('project') project?: string) {
+    const cat = await this.bitrix.resolveProjectCategoryIds(project);
+    return this.bitrix.getSources(days ? parseInt(days, 10) : 30, cat);
   }
 
   @Get('deals')
-  deals(@Query('days') days?: string, @Query('limit') limit?: string) {
+  async deals(
+    @Query('days') days?: string,
+    @Query('limit') limit?: string,
+    @Query('project') project?: string,
+  ) {
+    const cat = await this.bitrix.resolveProjectCategoryIds(project);
     return this.bitrix.getDeals(
       days ? parseInt(days, 10) : 30,
       limit ? parseInt(limit, 10) : 50,
+      cat,
     );
   }
 
   @Get('stages-breakdown')
-  stagesBreakdown(@Query('days') days?: string) {
-    return this.bitrix.getStagesBreakdown(days ? parseInt(days, 10) : 90);
+  async stagesBreakdown(@Query('days') days?: string, @Query('project') project?: string) {
+    const cat = await this.bitrix.resolveProjectCategoryIds(project);
+    return this.bitrix.getStagesBreakdown(days ? parseInt(days, 10) : 90, cat);
   }
 
   @Get('pipeline-funnel')
-  pipelineFunnel(@Query('days') days?: string) {
-    return this.bitrix.getPipelineFunnel(days ? parseInt(days, 10) : 90);
+  async pipelineFunnel(@Query('days') days?: string, @Query('project') project?: string) {
+    const cat = await this.bitrix.resolveProjectCategoryIds(project);
+    return this.bitrix.getPipelineFunnel(days ? parseInt(days, 10) : 90, cat);
   }
 
   @Get('pipeline-stages')

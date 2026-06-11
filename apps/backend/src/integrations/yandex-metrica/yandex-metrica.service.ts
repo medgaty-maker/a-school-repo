@@ -112,12 +112,23 @@ export class YandexMetricaService {
     }
   }
 
-  async getDailyVisits(datePreset = 'last_28d'): Promise<Array<{ date: string; visits: number }>> {
+  // slug проекта → его счётчики. undefined без проекта (все), [] если маппинг пуст (0).
+  async resolveProjectCounterIds(slug?: string): Promise<string[] | undefined> {
+    if (!slug) return undefined;
+    const p = await this.prisma.project.findUnique({
+      where: { slug },
+      select: { metricaCounterIds: true },
+    });
+    return (p?.metricaCounterIds ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  }
+
+  async getDailyVisits(datePreset = 'last_28d', filterIds?: string[]): Promise<Array<{ date: string; visits: number }>> {
     const token = await this.getToken();
     const cfg = await this.prisma.yandexMetricaConfig.findFirst();
     if (!token || !cfg) return [];
 
-    const counterIds = cfg.counterIds.split(',').map((s) => s.trim()).filter(Boolean);
+    let counterIds = cfg.counterIds.split(',').map((s) => s.trim()).filter(Boolean);
+    if (filterIds) counterIds = counterIds.filter((c) => filterIds.includes(c));
     const { dateFrom, dateTo } = resolveDates(datePreset);
 
     const byDate = new Map<string, number>();
@@ -146,14 +157,15 @@ export class YandexMetricaService {
     return [...byDate.entries()].map(([date, visits]) => ({ date, visits })).sort((a, b) => a.date.localeCompare(b.date));
   }
 
-  async getLeads(datePreset = 'last_28d'): Promise<LeadBreakdown> {
+  async getLeads(datePreset = 'last_28d', filterIds?: string[]): Promise<LeadBreakdown> {
     const token = await this.getToken();
     const cfg = await this.prisma.yandexMetricaConfig.findFirst();
     if (!token || !cfg) {
       return { phone: 0, messenger: 0, form: 0, social: 0, total: 0, period: datePreset, counters: [] };
     }
 
-    const counterIds = cfg.counterIds.split(',').map((s) => s.trim()).filter(Boolean);
+    let counterIds = cfg.counterIds.split(',').map((s) => s.trim()).filter(Boolean);
+    if (filterIds) counterIds = counterIds.filter((c) => filterIds.includes(c));
     const { dateFrom, dateTo } = resolveDates(datePreset);
 
     const fetchGoal = async (counterId: string, goalId: number): Promise<number> => {

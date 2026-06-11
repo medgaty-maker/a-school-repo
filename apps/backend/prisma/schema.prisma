@@ -77,6 +77,11 @@ model Project {
   updatedAt   DateTime          @updatedAt
   platforms   ProjectPlatform[]
   utmLinks    UtmLink[]
+
+  // Привязка источников данных к проекту (ID через запятую). Пусто = нет данных по источнику.
+  bitrixCategoryIds String?   // воронки Bitrix, напр. "38,42,52"
+  metricaCounterIds String?   // счётчики Яндекс.Метрики, напр. "105849697"
+  metaCampaignIds   String?   // кампании Meta Ads, напр. "120300...,120400..."
 }
 
 model ProjectPlatform {

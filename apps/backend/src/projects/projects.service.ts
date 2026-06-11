@@ -38,6 +38,22 @@ export class ProjectsService {
     return this.prisma.project.update({ where: { id }, data });
   }
 
+  // Привязка источников данных к проекту (ID через запятую; пустая строка → очистить)
+  updateSources(
+    slug: string,
+    data: { bitrixCategoryIds?: string; metricaCounterIds?: string; metaCampaignIds?: string },
+  ) {
+    const norm = (v?: string) => (v === undefined ? undefined : v.trim() || null);
+    return this.prisma.project.update({
+      where: { slug },
+      data: {
+        bitrixCategoryIds: norm(data.bitrixCategoryIds),
+        metricaCounterIds: norm(data.metricaCounterIds),
+        metaCampaignIds: norm(data.metaCampaignIds),
+      },
+    });
+  }
+
   static periodToDays(period: string | undefined): number {
     switch (period) {
       case 'today':

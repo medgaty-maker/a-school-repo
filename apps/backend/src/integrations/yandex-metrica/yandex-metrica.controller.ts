@@ -18,13 +18,15 @@ export class YandexMetricaController {
   }
 
   @Get('leads')
-  getLeads(@Query('datePreset') datePreset?: string) {
-    return this.svc.getLeads(datePreset ?? 'last_28d');
+  async getLeads(@Query('datePreset') datePreset?: string, @Query('project') project?: string) {
+    const counters = await this.svc.resolveProjectCounterIds(project);
+    return this.svc.getLeads(datePreset ?? 'last_28d', counters);
   }
 
   @Get('visits-daily')
-  getDailyVisits(@Query('datePreset') datePreset?: string) {
-    return this.svc.getDailyVisits(datePreset ?? 'last_28d');
+  async getDailyVisits(@Query('datePreset') datePreset?: string, @Query('project') project?: string) {
+    const counters = await this.svc.resolveProjectCounterIds(project);
+    return this.svc.getDailyVisits(datePreset ?? 'last_28d', counters);
   }
 
   @Get('ai-insights')

@@ -202,8 +202,28 @@ export class MetaService {
     }
   }
 
-  async getAdInsights(datePreset = 'last_28d'): Promise<AdInsightsSummary> {
-    const cacheKey = `insights:${datePreset}`;
+  // Graph API filtering по campaign.id (пусто → без фильтра)
+  private campaignFilter(campaignIds?: string[]): string {
+    if (!campaignIds || campaignIds.length === 0) return '';
+    const f = JSON.stringify([{ field: 'campaign.id', operator: 'IN', value: campaignIds }]);
+    return `&filtering=${encodeURIComponent(f)}`;
+  }
+
+  // slug проекта → его кампании Meta. undefined без проекта (глобально), [] если маппинг пуст.
+  async resolveProjectCampaignIds(slug?: string): Promise<string[] | undefined> {
+    if (!slug) return undefined;
+    const p = await this.prisma.project.findUnique({
+      where: { slug },
+      select: { metaCampaignIds: true },
+    });
+    return (p?.metaCampaignIds ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  }
+
+  // campaignIds: undefined → весь аккаунт; [] → проект без кампаний (0); [..] → фильтр по кампаниям
+  async getAdInsights(datePreset = 'last_28d', campaignIds?: string[]): Promise<AdInsightsSummary> {
+    if (campaignIds && campaignIds.length === 0) return this.emptyInsights();
+
+    const cacheKey = `insights:${datePreset}:${campaignIds?.join(',') ?? 'all'}`;
     const cached = this.insightsCache.get(cacheKey);
     if (cached && Date.now() - cached.fetchedAt < this.CACHE_TTL) {
       return cached.data as AdInsightsSummary;
@@ -214,7 +234,8 @@ export class MetaService {
     if (!cfg) throw new BadRequestException('Meta Ads not configured');
 
     const fields = 'spend,impressions,clicks,ctr,cpc,cpp,reach,frequency,actions,action_values';
-    const url = `${META_API_BASE}/${cfg.adAccountId}/insights?fields=${fields}&date_preset=${datePreset}&access_token=${cfg.accessToken}`;
+    const filtering = this.campaignFilter(campaignIds);
+    const url = `${META_API_BASE}/${cfg.adAccountId}/insights?fields=${fields}&date_preset=${datePreset}${filtering}&access_token=${cfg.accessToken}`;
 
     const res = await fetch(url);
     const json = (await res.json()) as { data?: MetaInsightsRaw[]; error?: { message: string } };
@@ -230,10 +251,12 @@ export class MetaService {
     return result;
   }
 
-  async getInsightsDaily(datePreset = 'last_28d'): Promise<Array<{ date: string; impressions: number; spend: number; leads: number }>> {
+  async getInsightsDaily(datePreset = 'last_28d', campaignIds?: string[]): Promise<Array<{ date: string; impressions: number; spend: number; leads: number }>> {
+    if (campaignIds && campaignIds.length === 0) return [];
     const cfg = await this.getConfig();
     if (!cfg) return [];
-    const url = `${META_API_BASE}/${cfg.adAccountId}/insights?fields=impressions,spend,actions&date_preset=${datePreset}&time_increment=1&access_token=${cfg.accessToken}`;
+    const filtering = this.campaignFilter(campaignIds);
+    const url = `${META_API_BASE}/${cfg.adAccountId}/insights?fields=impressions,spend,actions&date_preset=${datePreset}&time_increment=1${filtering}&access_token=${cfg.accessToken}`;
     const res = await fetch(url);
     const json = (await res.json()) as { data?: any[]; error?: any };
     if (json.error) return [];

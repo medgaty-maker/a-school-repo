@@ -262,11 +262,11 @@ function ProjectDetailContent() {
 
     // KPI data: leads + Bitrix pipeline + Meta daily chart + Yandex daily
     Promise.all([
-      apiFetch<AdInsights>('/integrations/meta/ads/insights?datePreset=last_28d', { token }).catch(() => null),
-      apiFetch<LeadBreakdown>('/integrations/yandex-metrica/leads?datePreset=last_28d', { token }).catch(() => null),
-      apiFetch<PipelineFunnel>('/bitrix/pipeline-funnel?days=90', { token }).catch(() => null),
-      apiFetch<MetaDaily>('/integrations/meta/ads/insights-daily?datePreset=last_28d', { token }).catch(() => null),
-      apiFetch<YandexDaily>('/integrations/yandex-metrica/visits-daily?datePreset=last_28d', { token }).catch(() => null),
+      apiFetch<AdInsights>(`/integrations/meta/ads/insights?datePreset=last_28d&project=${slug}`, { token }).catch(() => null),
+      apiFetch<LeadBreakdown>(`/integrations/yandex-metrica/leads?datePreset=last_28d&project=${slug}`, { token }).catch(() => null),
+      apiFetch<PipelineFunnel>(`/bitrix/pipeline-funnel?days=90&project=${slug}`, { token }).catch(() => null),
+      apiFetch<MetaDaily>(`/integrations/meta/ads/insights-daily?datePreset=last_28d&project=${slug}`, { token }).catch(() => null),
+      apiFetch<YandexDaily>(`/integrations/yandex-metrica/visits-daily?datePreset=last_28d&project=${slug}`, { token }).catch(() => null),
     ]).then(([meta, metrica, bitrix, metaDailyData, yandexDailyData]) => {
       if (meta) setMetaInsights(meta);
       setMetaLeads(meta?.leads ?? 0);

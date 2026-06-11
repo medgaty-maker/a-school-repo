@@ -48,13 +48,15 @@ export class MetaController {
   }
 
   @Get('ads/insights')
-  getInsights(@Query('datePreset') datePreset?: string) {
-    return this.meta.getAdInsights(datePreset ?? 'last_28d');
+  async getInsights(@Query('datePreset') datePreset?: string, @Query('project') project?: string) {
+    const camp = await this.meta.resolveProjectCampaignIds(project);
+    return this.meta.getAdInsights(datePreset ?? 'last_28d', camp);
   }
 
   @Get('ads/insights-daily')
-  getInsightsDaily(@Query('datePreset') datePreset?: string) {
-    return this.meta.getInsightsDaily(datePreset ?? 'last_28d');
+  async getInsightsDaily(@Query('datePreset') datePreset?: string, @Query('project') project?: string) {
+    const camp = await this.meta.resolveProjectCampaignIds(project);
+    return this.meta.getInsightsDaily(datePreset ?? 'last_28d', camp);
   }
 
   @Get('ads/campaigns')

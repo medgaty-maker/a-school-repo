@@ -210,12 +210,43 @@ export class BitrixService {
     return { synced, errors };
   }
 
-  async getFunnel(daysBack = 30) {
+  // where для выборки сделок: дата + (опционально) воронки проекта.
+  // categoryIds === undefined → без фильтра (глобально); [] → ничего (проект без воронок).
+  private dealWhere(since: Date, categoryIds?: string[]) {
+    return {
+      dateCreate: { gte: since },
+      ...(categoryIds ? { categoryId: { in: categoryIds } } : {}),
+    };
+  }
+
+  // slug проекта → его воронки. undefined без проекта (глобально), [] если маппинг пуст.
+  async resolveProjectCategoryIds(slug?: string): Promise<string[] | undefined> {
+    if (!slug) return undefined;
+    const p = await this.prisma.project.findUnique({
+      where: { slug },
+      select: { bitrixCategoryIds: true },
+    });
+    return (p?.bitrixCategoryIds ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  }
+
+  // Список воронок Bitrix (для UI маппинга)
+  async getCategories() {
+    const rows = await this.prisma.bitrixDeal.groupBy({
+      by: ['categoryId', 'categoryName'],
+      _count: { _all: true },
+    });
+    return rows
+      .filter((r) => r.categoryId)
+      .map((r) => ({ categoryId: r.categoryId!, categoryName: r.categoryName, count: r._count._all }))
+      .sort((a, b) => b.count - a.count);
+  }
+
+  async getFunnel(daysBack = 30, categoryIds?: string[]) {
     const since = new Date();
     since.setUTCDate(since.getUTCDate() - daysBack);
 
     const deals = await this.prisma.bitrixDeal.findMany({
-      where: { dateCreate: { gte: since } },
+      where: this.dealWhere(since, categoryIds),
       select: { stageId: true, stageName: true, isWon: true, isLost: true, opportunity: true },
     });
 
@@ -258,12 +289,12 @@ export class BitrixService {
     };
   }
 
-  async getSources(daysBack = 30) {
+  async getSources(daysBack = 30, categoryIds?: string[]) {
     const since = new Date();
     since.setUTCDate(since.getUTCDate() - daysBack);
 
     const deals = await this.prisma.bitrixDeal.findMany({
-      where: { dateCreate: { gte: since } },
+      where: this.dealWhere(since, categoryIds),
       select: { utmSource: true, utmCampaign: true, utmMedium: true, isWon: true, opportunity: true },
     });
 
@@ -288,12 +319,12 @@ export class BitrixService {
       .sort((a, b) => b.count - a.count);
   }
 
-  async getDeals(daysBack = 30, limit = 50) {
+  async getDeals(daysBack = 30, limit = 50, categoryIds?: string[]) {
     const since = new Date();
     since.setUTCDate(since.getUTCDate() - daysBack);
 
     return this.prisma.bitrixDeal.findMany({
-      where: { dateCreate: { gte: since } },
+      where: this.dealWhere(since, categoryIds),
       orderBy: { dateCreate: 'desc' },
       take: limit,
       select: {
@@ -363,10 +394,10 @@ export class BitrixService {
     return deals;
   }
 
-  async getStagesBreakdown(daysBack: number) {
+  async getStagesBreakdown(daysBack: number, categoryIds?: string[]) {
     const since = new Date(Date.now() - daysBack * 86_400_000);
     const deals = await this.prisma.bitrixDeal.findMany({
-      where: { dateCreate: { gte: since } },
+      where: this.dealWhere(since, categoryIds),
       select: { stageId: true, stageName: true, isWon: true, isLost: true },
     });
 
@@ -476,24 +507,27 @@ export class BitrixService {
     return { total, stages };
   }
 
-  // Фильтр по конкретным воронкам (Резерв, продажа, набор в 1 класс)
-  async getPipelineFunnel(daysBack = 90) {
+  // Фильтр по воронкам. Если categoryIds задан (проект) — по ним; иначе глобально
+  // по названиям воронок продаж (Резерв, продажа, набор в 1 класс) с фолбэком на все.
+  async getPipelineFunnel(daysBack = 90, categoryIds?: string[]) {
     const since = new Date(Date.now() - daysBack * 86_400_000);
     const SALES_PIPELINES = ['резерв', 'продажа', 'набор в 1 класс'];
 
     const allDeals = await this.prisma.bitrixDeal.findMany({
-      where: { dateCreate: { gte: since } },
+      where: this.dealWhere(since, categoryIds),
       select: { isWon: true, isLost: true, categoryId: true, categoryName: true, opportunity: true },
     });
 
-    // Filter by pipeline name (case-insensitive)
-    const filtered = allDeals.filter((d) => {
-      const name = (d.categoryName ?? '').toLowerCase();
-      return SALES_PIPELINES.some((p) => name.includes(p));
-    });
-
-    // If no matches (category names not yet synced), fall back to all deals
-    const deals = filtered.length > 0 ? filtered : allDeals;
+    let deals = allDeals;
+    let isFiltered = categoryIds !== undefined;
+    if (categoryIds === undefined) {
+      // глобально: по названиям воронок продаж, с фолбэком на все
+      const filtered = allDeals.filter((d) =>
+        SALES_PIPELINES.some((p) => (d.categoryName ?? '').toLowerCase().includes(p)),
+      );
+      deals = filtered.length > 0 ? filtered : allDeals;
+      isFiltered = filtered.length > 0;
+    }
 
     const won = deals.filter((d) => d.isWon).length;
     const lost = deals.filter((d) => d.isLost).length;
@@ -518,7 +552,7 @@ export class BitrixService {
       totalAmount: Math.round(totalAmount),
       total: deals.length,
       pipelines: [...byPipeline.entries()].map(([name, v]) => ({ name, ...v })).sort((a, b) => b.total - a.total),
-      isFiltered: filtered.length > 0,
+      isFiltered,
     };
   }
 }

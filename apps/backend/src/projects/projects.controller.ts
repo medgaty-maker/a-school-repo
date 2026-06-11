@@ -10,6 +10,12 @@ class UpdateProjectDto {
   @IsOptional() @IsEnum(ProjectPriority) priority?: ProjectPriority;
 }
 
+class UpdateSourcesDto {
+  @IsOptional() @IsString() bitrixCategoryIds?: string;
+  @IsOptional() @IsString() metricaCounterIds?: string;
+  @IsOptional() @IsString() metaCampaignIds?: string;
+}
+
 @Controller('projects')
 export class ProjectsController {
   constructor(private readonly projects: ProjectsService) {}
@@ -36,6 +42,12 @@ export class ProjectsController {
         ? parseInt(days, 10)
         : 30;
     return this.projects.getMetrics(slug, daysBack);
+  }
+
+  @Roles(Role.ADMIN, Role.MARKETING_DIRECTOR)
+  @Patch(':slug/sources')
+  updateSources(@Param('slug') slug: string, @Body() dto: UpdateSourcesDto) {
+    return this.projects.updateSources(slug, dto);
   }
 
   @Roles(Role.ADMIN, Role.MARKETING_DIRECTOR)
