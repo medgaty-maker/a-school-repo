@@ -112,9 +112,11 @@ function MultiPlatformChart({
     ? Math.ceil(Math.max(...Array.from(yandexMap.values())) * 1.15 / 500) * 500
     : 5000;
 
-  const allDays = metric === 'views'
-    ? [...new Set([...ytMap.keys(), ...igMap.keys(), ...metaViewsMap.keys(), ...yandexMap.keys()])].sort()
-    : [...metaLeadsMap.keys()].sort();
+  const isValidDay = (d: string) => !!d && !isNaN(new Date(d).getTime());
+  const allDays = (metric === 'views'
+    ? [...new Set([...ytMap.keys(), ...igMap.keys(), ...metaViewsMap.keys(), ...yandexMap.keys()])]
+    : [...metaLeadsMap.keys()]
+  ).filter(isValidDay).sort();
 
   if (allDays.length === 0) {
     return (
@@ -335,36 +337,42 @@ function ProjectDetailContent() {
             label="Просмотры"
             value={totalViews || null}
             icon={<Eye className="size-4" />}
+            hint={`YouTube/IG ${formatNumber((yt?.metrics?.views_28d ?? 0) + (ig?.metrics?.views_28d ?? 0))} · Meta ${formatNumber(metaImpressions)} · Яндекс ${formatNumber(yandexVisits)}`}
             pendingNote="Подключите платформы"
           />
           <KpiCard
             label="Подписчики"
             value={totalSubs || null}
             icon={<Users className="size-4" />}
+            hint="Источники: YouTube + Instagram"
             pendingNote="Подключите платформы"
           />
           <KpiCard
             label="Взаимодействия"
             value={totalInteractions || null}
             icon={<Heart className="size-4" />}
+            hint="Источники: Instagram + YouTube"
             pendingNote="Нет данных"
           />
           <KpiCard
             label="Лиды"
             value={totalLeads || null}
             icon={<Target className="size-4" />}
+            hint={`Метрика ${formatNumber(metricaLeads)} · Meta ${formatNumber(metaLeads)}`}
             pendingNote="Подключите Meta / Метрику"
           />
           <KpiCard
             label="Записи"
             value={bitrixActive || null}
             icon={<BookOpen className="size-4" />}
+            hint="Источник: Bitrix24 (сделки в работе)"
             pendingNote="Подключите Bitrix24"
           />
           <KpiCard
             label="Продажи"
             value={bitrixWon || null}
             icon={<TrendingUp className="size-4" />}
+            hint="Источник: Bitrix24 (выигранные)"
             pendingNote="Подключите Bitrix24"
           />
         </div>
