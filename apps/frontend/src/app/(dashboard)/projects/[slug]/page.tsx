@@ -232,6 +232,7 @@ function ProjectDetailContent() {
   const [chartMetric, setChartMetric] = useState<'views' | 'leads'>('views');
   const [aiInsights, setAiInsights] = useState<AiInsights | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [kpiLoading, setKpiLoading] = useState(true);
 
   const { period } = usePeriod();
   const periodLabel = PERIODS.find((p) => p.value === period)?.label ?? period;
@@ -267,6 +268,7 @@ function ProjectDetailContent() {
       .catch((e) => setError((e as Error).message));
 
     // KPI data: leads + Bitrix pipeline + Meta daily chart + Yandex daily
+    setKpiLoading(true);
     Promise.all([
       apiFetch<AdInsights>(`/integrations/meta/ads/insights?datePreset=last_28d&project=${slug}`, { token }).catch(() => null),
       apiFetch<LeadBreakdown>(`/integrations/yandex-metrica/leads?datePreset=last_28d&project=${slug}`, { token }).catch(() => null),
@@ -282,7 +284,7 @@ function ProjectDetailContent() {
       setBitrixFunnel(bitrix ?? null);
       if (metaDailyData) setMetaDaily(metaDailyData);
       if (yandexDailyData) setYandexDaily(yandexDailyData);
-    });
+    }).finally(() => setKpiLoading(false));
   }, [slug, period]);
 
   if (error) {
@@ -402,8 +404,8 @@ function ProjectDetailContent() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <PlatformCard platform="YOUTUBE" data={data.platforms.YOUTUBE as any} />
           <PlatformCard platform="INSTAGRAM" data={data.platforms.INSTAGRAM as any} />
-          <MetaAdsCard insights={metaInsights} kztRate={metaInsights?.kztRate ?? 460} />
-          <BitrixCard funnel={bitrixFunnel} />
+          <MetaAdsCard insights={metaInsights} kztRate={metaInsights?.kztRate ?? 460} loading={kpiLoading} />
+          <BitrixCard funnel={bitrixFunnel} loading={kpiLoading} />
         </div>
       </section>
 
@@ -618,7 +620,7 @@ function readCookie(name: string): string | null {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
-function MetaAdsCard({ insights, kztRate }: { insights: AdInsights | null; kztRate: number }) {
+function MetaAdsCard({ insights, kztRate, loading }: { insights: AdInsights | null; kztRate: number; loading?: boolean }) {
   function fmtUsd(n: number) {
     if (n >= 1000) return `$${(n / 1000).toFixed(1)}K`;
     return `$${n.toFixed(2)}`;
@@ -656,7 +658,9 @@ function MetaAdsCard({ insights, kztRate }: { insights: AdInsights | null; kztRa
         )}
       </div>
       <div className="text-sm text-muted-foreground">Facebook / Instagram реклама</div>
-      {!insights ? (
+      {loading ? (
+        <div className="text-xs text-muted-foreground py-3 animate-pulse">Загрузка…</div>
+      ) : !insights ? (
         <div className="text-xs text-muted-foreground py-3">Нет данных за 28 дней</div>
       ) : (
         <div className="grid grid-cols-2 gap-3">
@@ -677,7 +681,7 @@ function MetaAdsCard({ insights, kztRate }: { insights: AdInsights | null; kztRa
   );
 }
 
-function BitrixCard({ funnel }: { funnel: PipelineFunnel | null }) {
+function BitrixCard({ funnel, loading }: { funnel: PipelineFunnel | null; loading?: boolean }) {
   const hasData = !!funnel && funnel.total > 0;
   const conv = funnel && funnel.total > 0 ? `${Math.round((funnel.won / funnel.total) * 1000) / 10}%` : '—';
   const metrics = funnel
@@ -707,7 +711,9 @@ function BitrixCard({ funnel }: { funnel: PipelineFunnel | null }) {
         )}
       </div>
       <div className="text-sm text-muted-foreground">Сделки по воронкам проекта · 90 дней</div>
-      {!hasData ? (
+      {loading ? (
+        <div className="text-xs text-muted-foreground py-3 animate-pulse">Загрузка…</div>
+      ) : !hasData ? (
         <div className="text-xs text-muted-foreground py-3">
           Нет привязанных воронок. Назначь их в «Настройках → Привязка источников к проектам».
         </div>

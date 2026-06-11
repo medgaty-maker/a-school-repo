@@ -4,6 +4,42 @@ type FetchOptions = RequestInit & { token?: string };
 
 let refreshing: Promise<string | null> | null = null;
 
+const TIMEOUT_MS = 20000; // таймаут одного запроса
+const RETRIES = 2;        // доп. попытки при медленном/холодном бэке
+const RETRY_STATUS = [500, 502, 503, 504, 524]; // временные ошибки сервера
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function fetchWithTimeout(url: string, init: RequestInit, ms = TIMEOUT_MS): Promise<Response> {
+  const ctrl = new AbortController();
+  const id = setTimeout(() => ctrl.abort(), ms);
+  return fetch(url, { ...init, signal: ctrl.signal }).finally(() => clearTimeout(id));
+}
+
+// fetch с таймаутом и ретраями. Сетевые ошибки/таймаут ретраим всегда,
+// 5xx/524 — только для GET (POST/PUT не дублируем).
+async function resilientFetch(url: string, init: RequestInit): Promise<Response> {
+  const isGet = (init.method ?? 'GET').toUpperCase() === 'GET';
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= RETRIES; attempt++) {
+    try {
+      const res = await fetchWithTimeout(url, init);
+      if (isGet && RETRY_STATUS.includes(res.status) && attempt < RETRIES) {
+        await sleep(400 * (attempt + 1));
+        continue;
+      }
+      return res;
+    } catch (e) {
+      lastErr = e; // сеть или таймаут (abort)
+      if (attempt < RETRIES) {
+        await sleep(400 * (attempt + 1));
+        continue;
+      }
+    }
+  }
+  throw lastErr ?? new Error('Сеть недоступна');
+}
+
 async function tryRefresh(): Promise<string | null> {
   const rt = typeof localStorage !== 'undefined' ? localStorage.getItem('refresh_token') : null;
   if (!rt) return null;
@@ -33,7 +69,7 @@ export async function apiFetch<T = unknown>(path: string, opts: FetchOptions = {
   headers.set('ngrok-skip-browser-warning', 'true');
   if (opts.token) headers.set('Authorization', `Bearer ${opts.token}`);
 
-  const res = await fetch(`${API_BASE}/api${path}`, { ...opts, headers, cache: 'no-store' });
+  const res = await resilientFetch(`${API_BASE}/api${path}`, { ...opts, headers, cache: 'no-store' });
 
   if (res.status === 401 && opts.token) {
     // Deduplicate concurrent refresh calls
@@ -45,7 +81,7 @@ export async function apiFetch<T = unknown>(path: string, opts: FetchOptions = {
     retryHeaders.set('Content-Type', 'application/json');
     retryHeaders.set('ngrok-skip-browser-warning', 'true');
     retryHeaders.set('Authorization', `Bearer ${newToken}`);
-    const retry = await fetch(`${API_BASE}/api${path}`, { ...opts, headers: retryHeaders, cache: 'no-store' });
+    const retry = await resilientFetch(`${API_BASE}/api${path}`, { ...opts, headers: retryHeaders, cache: 'no-store' });
     if (!retry.ok) {
       const text = await retry.text().catch(() => '');
       throw new Error(`API ${retry.status}: ${text || retry.statusText}`);
