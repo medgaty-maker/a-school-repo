@@ -11,3 +11,6 @@ coverage/
 prisma/migrations/dev/
 .logs/
 *.tsbuildinfo
+
+# Локальные конфиги инструментов
+.claude/
