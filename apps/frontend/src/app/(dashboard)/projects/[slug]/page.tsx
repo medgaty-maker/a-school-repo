@@ -64,7 +64,10 @@ type YoutubeDetail = {
 
 type AdInsights = { leads: number; spend: number; impressions: number; clicks: number; reach: number; ctr: number; cpc: number; cpl: number; roas: number; kztRate: number };
 type LeadBreakdown = { total: number };
-type PipelineFunnel = { won: number; inProgress: number; totalAmount: number };
+type PipelineFunnel = {
+  won: number; inProgress: number; lost: number; total: number; totalAmount: number;
+  pipelines?: Array<{ name: string; won: number; inProgress: number; total: number }>;
+};
 type MetaDaily = Array<{ date: string; impressions: number; spend: number; leads: number }>;
 type YandexDaily = Array<{ date: string; visits: number }>;
 type AiRecommendation = { priority: string; page: string; issue: string; recommendation: string; expectedImpact: string };
@@ -223,6 +226,7 @@ function ProjectDetailContent() {
   const [metricaLeads, setMetricaLeads] = useState<number>(0);
   const [bitrixWon, setBitrixWon] = useState<number>(0);
   const [bitrixActive, setBitrixActive] = useState<number>(0);
+  const [bitrixFunnel, setBitrixFunnel] = useState<PipelineFunnel | null>(null);
   const [metaDaily, setMetaDaily] = useState<MetaDaily>([]);
   const [yandexDaily, setYandexDaily] = useState<YandexDaily>([]);
   const [chartMetric, setChartMetric] = useState<'views' | 'leads'>('views');
@@ -275,6 +279,7 @@ function ProjectDetailContent() {
       setMetricaLeads(metrica?.total ?? 0);
       setBitrixWon(bitrix?.won ?? 0);
       setBitrixActive(bitrix?.inProgress ?? 0);
+      setBitrixFunnel(bitrix ?? null);
       if (metaDailyData) setMetaDaily(metaDailyData);
       if (yandexDailyData) setYandexDaily(yandexDailyData);
     });
@@ -398,6 +403,7 @@ function ProjectDetailContent() {
           <PlatformCard platform="YOUTUBE" data={data.platforms.YOUTUBE as any} />
           <PlatformCard platform="INSTAGRAM" data={data.platforms.INSTAGRAM as any} />
           <MetaAdsCard insights={metaInsights} kztRate={metaInsights?.kztRate ?? 460} />
+          <BitrixCard funnel={bitrixFunnel} />
         </div>
       </section>
 
@@ -665,6 +671,72 @@ function MetaAdsCard({ insights, kztRate }: { insights: AdInsights | null; kztRa
       <div className="border-t border-border pt-3">
         <Link href="/ads" className="text-xs text-primary hover:underline flex items-center gap-1">
           Подробнее по кампаниям <ArrowLeft className="size-3 rotate-180" />
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function BitrixCard({ funnel }: { funnel: PipelineFunnel | null }) {
+  const hasData = !!funnel && funnel.total > 0;
+  const conv = funnel && funnel.total > 0 ? `${Math.round((funnel.won / funnel.total) * 1000) / 10}%` : '—';
+  const metrics = funnel
+    ? [
+        { label: 'Всего сделок', value: formatNumber(funnel.total) },
+        { label: 'В работе', value: formatNumber(funnel.inProgress) },
+        { label: 'Выиграно', value: formatNumber(funnel.won) },
+        { label: 'Проиграно', value: formatNumber(funnel.lost) },
+        { label: 'Конверсия', value: conv },
+        { label: 'Сумма (выигр.)', value: funnel.totalAmount > 0 ? formatNumber(funnel.totalAmount) : '—' },
+      ]
+    : [];
+
+  return (
+    <div className="border border-border rounded-xl bg-background p-5 space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Target className="size-5 text-primary" />
+          <div className="font-semibold">Bitrix24 — лиды и продажи</div>
+        </div>
+        {hasData ? (
+          <span className="text-xs flex items-center gap-1 text-success">
+            <TrendingUp className="size-3.5" /> Активно
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground">нет данных</span>
+        )}
+      </div>
+      <div className="text-sm text-muted-foreground">Сделки по воронкам проекта · 90 дней</div>
+      {!hasData ? (
+        <div className="text-xs text-muted-foreground py-3">
+          Нет привязанных воронок. Назначь их в «Настройках → Привязка источников к проектам».
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            {metrics.map((m) => (
+              <div key={m.label} className="space-y-0.5">
+                <div className="text-xs text-muted-foreground">{m.label}</div>
+                <div className="font-semibold text-sm">{m.value}</div>
+              </div>
+            ))}
+          </div>
+          {funnel?.pipelines && funnel.pipelines.length > 0 && (
+            <div className="border-t border-border pt-3 space-y-1.5">
+              <div className="text-xs text-muted-foreground">Топ воронок</div>
+              {funnel.pipelines.slice(0, 4).map((p) => (
+                <div key={p.name} className="flex items-center justify-between text-xs gap-2">
+                  <span className="truncate text-muted-foreground">{p.name.replace(/^C\d+:/, '')}</span>
+                  <span className="tabular-nums shrink-0">{formatNumber(p.total)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+      <div className="border-t border-border pt-3">
+        <Link href="/leads" className="text-xs text-primary hover:underline flex items-center gap-1">
+          Подробнее по сделкам <ArrowLeft className="size-3 rotate-180" />
         </Link>
       </div>
     </div>
