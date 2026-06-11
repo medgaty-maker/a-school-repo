@@ -352,15 +352,25 @@ export class MetaService {
       this.logger.warn('Could not fetch IG username, using user_id as name');
     }
 
-    // 4. Store in ProjectPlatform (token valid ~60 days with Instagram Login API)
-    const expiresAt = new Date(Date.now() + 60 * 24 * 3600 * 1000);
+    // 4. Обмениваем короткоживущий токен (~1 час) на долгоживущий (60 дней).
+    // Без этого токен умирает в тот же день, а статус остаётся ACTIVE.
+    let finalToken = shortToken.access_token;
+    let expiresAt = new Date(Date.now() + 60 * 24 * 3600 * 1000);
+    try {
+      const ll = await this.exchangeForLongLived(shortToken.access_token);
+      finalToken = ll.access_token;
+      if (ll.expires_in) expiresAt = new Date(Date.now() + ll.expires_in * 1000);
+      this.logger.log(`IG long-lived токен получен, expires_in=${ll.expires_in ?? 'n/a'}`);
+    } catch (e) {
+      this.logger.warn(`IG long-lived обмен не удался, сохраняю короткий токен: ${(e as Error).message}`);
+    }
 
     await this.prisma.projectPlatform.update({
       where: { id: pp.id },
       data: {
         externalAccountId: igUserId,
         externalAccountName: username,
-        accessTokenEnc: this.crypto.encrypt(shortToken.access_token),
+        accessTokenEnc: this.crypto.encrypt(finalToken),
         tokenExpiresAt: expiresAt,
         status: IntegrationStatus.ACTIVE,
         lastError: null,
@@ -544,19 +554,17 @@ export class MetaService {
     return { access_token: data.access_token, user_id: String(data.user_id ?? '') };
   }
 
-  // Instagram Business Login — долгосрочный токен (60 дней) через graph.instagram.com
+  // Instagram Business Login — долгосрочный токен (60 дней) через graph.instagram.com.
+  // Эндпоинт ig_exchange_token — это GET с query-параметрами.
   private async exchangeForLongLived(shortToken: string): Promise<{ access_token: string; expires_in?: number }> {
     const appSecret = this.requireEnv('META_IG_APP_SECRET');
 
-    const params = new URLSearchParams({
-      grant_type: 'ig_exchange_token',
-      client_secret: appSecret,
-      access_token: shortToken,
-    });
-    const res = await fetch(`${IG_API_BASE}/access_token`, {
-      method: 'POST',
-      body: params,
-    });
+    const url = new URL(`${IG_API_BASE}/access_token`);
+    url.searchParams.set('grant_type', 'ig_exchange_token');
+    url.searchParams.set('client_secret', appSecret);
+    url.searchParams.set('access_token', shortToken);
+
+    const res = await fetch(url.toString());
     const data = (await res.json()) as { access_token?: string; expires_in?: number; error?: { message: string } };
     if (data.error || !data.access_token) {
       throw new BadRequestException(`Instagram long-lived token exchange failed: ${data.error?.message ?? 'no token'}`);
