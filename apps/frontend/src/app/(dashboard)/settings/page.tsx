@@ -744,28 +744,53 @@ type BitrixCategory = { categoryId: string; categoryName: string | null; count: 
 type MetaCampaign = { id: string; name: string };
 type Sel = { bitrix: Set<string>; metrica: Set<string>; meta: Set<string> };
 
-function Chips({ options, selected, onToggle }: {
+function Group({ label, options, selected, onToggle, q, setQ }: {
+  label: string;
   options: Array<{ id: string; label: string }>;
   selected: Set<string>;
   onToggle: (id: string) => void;
+  q: string;
+  setQ: (v: string) => void;
 }) {
-  if (options.length === 0) return <span className="text-xs text-muted-foreground italic">нет вариантов</span>;
+  const showSearch = options.length > 12;
+  const ql = q.trim().toLowerCase();
+  const filtered = ql ? options.filter((o) => o.label.toLowerCase().includes(ql)) : options;
+  // выбранные — вперёд, чтобы их было видно сразу
+  const sorted = [...filtered].sort((a, b) => Number(selected.has(b.id)) - Number(selected.has(a.id)));
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {options.map((o) => (
-        <button
-          key={o.id}
-          type="button"
-          onClick={() => onToggle(o.id)}
-          className={`text-xs px-2 py-1 rounded-full border transition-colors ${
-            selected.has(o.id)
-              ? 'bg-primary text-primary-foreground border-primary'
-              : 'bg-muted text-muted-foreground border-border hover:bg-muted/70'
-          }`}
-        >
-          {o.label}
-        </button>
-      ))}
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs text-muted-foreground">{label}</span>
+        <span className="text-xs text-muted-foreground">выбрано {selected.size} из {options.length}</span>
+      </div>
+      {showSearch && (
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="поиск…"
+          className="w-full mb-2 px-2 py-1 text-xs bg-background border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+        />
+      )}
+      {sorted.length === 0 ? (
+        <span className="text-xs text-muted-foreground italic">{options.length === 0 ? 'нет вариантов' : 'ничего не найдено'}</span>
+      ) : (
+        <div className="flex flex-wrap gap-1.5 max-h-44 overflow-y-auto">
+          {sorted.map((o) => (
+            <button
+              key={o.id}
+              type="button"
+              onClick={() => onToggle(o.id)}
+              className={`text-xs px-2 py-1 rounded-full border transition-colors ${
+                selected.has(o.id)
+                  ? 'bg-primary text-primary-foreground border-primary'
+                  : 'bg-muted text-muted-foreground border-border hover:bg-muted/70'
+              }`}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -779,6 +804,8 @@ function SourceMappingSection() {
   const [sel, setSel] = useState<Record<string, Sel>>({});
   const [saving, setSaving] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(null);          // раскрытый проект
+  const [search, setSearch] = useState<Record<string, string>>({}); // поиск по ключу "slug:group"
 
   useEffect(() => {
     const token = readCookie('access_token');
@@ -845,29 +872,32 @@ function SourceMappingSection() {
       </div>
       {projects.map((p) => {
         const s = sel[p.slug] ?? { bitrix: new Set<string>(), metrica: new Set<string>(), meta: new Set<string>() };
+        const isOpen = open === p.slug;
+        const sv = (gk: string) => search[`${p.slug}:${gk}`] ?? '';
+        const setSv = (gk: string, v: string) => setSearch((prev) => ({ ...prev, [`${p.slug}:${gk}`]: v }));
         return (
-          <div key={p.id} className="border-b border-border last:border-0 px-5 py-4 space-y-3">
-            <div className="font-medium text-sm">{p.name} <span className="text-xs text-muted-foreground">/{p.slug}</span></div>
-            <div>
-              <div className="text-xs text-muted-foreground mb-1">Воронки Bitrix</div>
-              <Chips options={categories.map((c) => ({ id: c.categoryId, label: `${c.categoryName ?? c.categoryId} (${c.count})` }))} selected={s.bitrix} onToggle={(id) => toggle(p.slug, 'bitrix', id)} />
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground mb-1">Счётчики Метрики</div>
-              <Chips options={counters.map((c) => ({ id: c, label: c }))} selected={s.metrica} onToggle={(id) => toggle(p.slug, 'metrica', id)} />
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground mb-1">Кампании Meta</div>
-              <Chips options={campaigns.map((c) => ({ id: c.id, label: c.name }))} selected={s.meta} onToggle={(id) => toggle(p.slug, 'meta', id)} />
-            </div>
+          <div key={p.id} className="border-b border-border last:border-0">
             <button
               type="button"
-              onClick={() => save(p.slug)}
-              disabled={saving === p.slug}
-              className="text-xs px-4 py-1.5 bg-primary text-primary-foreground rounded-md disabled:opacity-50"
+              onClick={() => setOpen(isOpen ? null : p.slug)}
+              className="w-full flex items-center justify-between px-5 py-3 hover:bg-muted/30 transition-colors text-left"
             >
-              {saving === p.slug ? 'Сохранение…' : 'Сохранить'}
+              <span className="font-medium text-sm">{p.name} <span className="text-xs text-muted-foreground">/{p.slug}</span></span>
+              <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                Bitrix {s.bitrix.size} · Метрика {s.metrica.size} · Meta {s.meta.size}
+                <ChevronRight className={`size-4 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+              </span>
             </button>
+            {isOpen && (
+              <div className="px-5 pb-4 space-y-3">
+                <Group label="Воронки Bitrix" options={categories.map((c) => ({ id: c.categoryId, label: `${c.categoryName ?? c.categoryId} (${c.count})` }))} selected={s.bitrix} onToggle={(id) => toggle(p.slug, 'bitrix', id)} q={sv('bitrix')} setQ={(v) => setSv('bitrix', v)} />
+                <Group label="Счётчики Метрики" options={counters.map((c) => ({ id: c, label: c }))} selected={s.metrica} onToggle={(id) => toggle(p.slug, 'metrica', id)} q={sv('metrica')} setQ={(v) => setSv('metrica', v)} />
+                <Group label="Кампании Meta" options={campaigns.map((c) => ({ id: c.id, label: c.name }))} selected={s.meta} onToggle={(id) => toggle(p.slug, 'meta', id)} q={sv('meta')} setQ={(v) => setSv('meta', v)} />
+                <button type="button" onClick={() => save(p.slug)} disabled={saving === p.slug} className="text-xs px-4 py-1.5 bg-primary text-primary-foreground rounded-md disabled:opacity-50">
+                  {saving === p.slug ? 'Сохранение…' : 'Сохранить'}
+                </button>
+              </div>
+            )}
           </div>
         );
       })}
