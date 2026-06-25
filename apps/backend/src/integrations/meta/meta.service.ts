@@ -665,7 +665,16 @@ export class MetaService {
     let followersCount = 0;
     try {
       const profRes = await fetch(`${IG_API_BASE}/${igId}?fields=followers_count&access_token=${encodedToken}`);
-      const profJson = (await profRes.json()) as { followers_count?: number; error?: unknown };
+      const profJson = (await profRes.json()) as { followers_count?: number; error?: { message?: string; code?: number } };
+      // Токен истёк (code 190) — помечаем EXPIRED, чтобы UI не показывал «Активно» + нули
+      if (profJson.error && (profJson.error.code === 190 || /expired|OAuthException/i.test(profJson.error.message ?? ''))) {
+        await this.prisma.projectPlatform.update({
+          where: { id: pp.id },
+          data: { status: IntegrationStatus.EXPIRED, lastError: 'Токен Instagram истёк — переподключите' },
+        });
+        this.logger.warn(`Instagram [${pp.id}] токен истёк → статус EXPIRED, снимок пропущен`);
+        return;
+      }
       followersCount = profJson.followers_count ?? 0;
     } catch {
       this.logger.warn(`Instagram [${pp.id}]: could not fetch followers`);
