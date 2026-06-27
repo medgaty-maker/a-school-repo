@@ -67,6 +67,8 @@ export class YandexMetricaService {
   private readonly counterGoals: Record<string, { name: string; phone?: number; messenger?: number; form?: number; social?: number }> = {
     '105849697': { name: 'Авторская школа', phone: 515884639, messenger: 495561583, form: 495567928, social: 496509659 },
     '106777545': { name: 'AVS', messenger: 511869511, form: 511920198 },
+    '107257454': { name: 'Ayaru', form: 543284976, social: 543672072 },
+    '109403117': { name: 'A-School Camp', phone: 562403632, messenger: 562403623, form: 569914570 },
   };
 
   constructor(
