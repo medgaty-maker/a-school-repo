@@ -420,30 +420,33 @@ export class BitrixService {
     throw new Error('Bitrix API error: 429 (исчерпаны ретраи)');
   }
 
+  // ID-based fast pagination (рекомендация Bitrix для больших списков):
+  // order[ID]=ASC + filter[>ID]=lastId + start:-1 (отключает подсчёт total).
+  // Без фильтра по дате — тянем всю историю: воронки содержат старые, но всё ещё
+  // открытые сделки, их нужно учитывать в «всего по воронке».
   private async fetchAllDeals(webhookUrl: string): Promise<BitrixDealRaw[]> {
     const deals: BitrixDealRaw[] = [];
-    let start = 0;
-    const since = new Date(Date.now() - 365 * 24 * 3600 * 1000).toISOString().split('T')[0];
+    let lastId = 0;
 
     while (true) {
       const res = await this.bitrixPost(`${webhookUrl}crm.deal.list.json`, {
-        order: { DATE_CREATE: 'DESC' },
-        filter: { '>=DATE_CREATE': since },
+        order: { ID: 'ASC' },
+        filter: { '>ID': lastId },
         select: [
           'ID', 'TITLE', 'STAGE_ID', 'STAGE_SEMANTIC_ID', 'IS_WON', 'CATEGORY_ID', 'SOURCE_ID',
           'UTM_SOURCE', 'UTM_MEDIUM', 'UTM_CAMPAIGN', 'UTM_CONTENT',
           'ASSIGNED_BY_ID', 'OPPORTUNITY', 'CURRENCY_ID',
           'DATE_CREATE', 'DATE_MODIFY', 'CLOSEDATE',
         ],
-        start,
+        start: -1,
       });
 
       if (!res.ok) throw new Error(`Bitrix API error: ${res.status}`);
-      const data = (await res.json()) as { result?: BitrixDealRaw[]; next?: number; total?: number };
-
-      deals.push(...(data.result ?? []));
-      if (!data.next) break;
-      start = data.next;
+      const data = (await res.json()) as { result?: BitrixDealRaw[] };
+      const page = data.result ?? [];
+      deals.push(...page);
+      if (page.length < 50) break; // последняя страница
+      lastId = Number(page[page.length - 1].ID);
       await this.sleep(300); // пауза между страницами, чтобы не упираться в rate limit
     }
 
@@ -452,21 +455,21 @@ export class BitrixService {
 
   private async fetchAllLeads(webhookUrl: string): Promise<BitrixLeadRaw[]> {
     const leads: BitrixLeadRaw[] = [];
-    let start = 0;
-    const since = new Date(Date.now() - 365 * 24 * 3600 * 1000).toISOString().split('T')[0];
+    let lastId = 0;
 
     while (true) {
       const res = await this.bitrixPost(`${webhookUrl}crm.lead.list.json`, {
-        order: { DATE_CREATE: 'DESC' },
-        filter: { '>=DATE_CREATE': since },
+        order: { ID: 'ASC' },
+        filter: { '>ID': lastId },
         select: ['ID', 'TITLE', 'STATUS_ID', 'SOURCE_ID', 'DATE_CREATE', 'DATE_MODIFY'],
-        start,
+        start: -1,
       });
       if (!res.ok) throw new Error(`Bitrix API error: ${res.status}`);
-      const data = (await res.json()) as { result?: BitrixLeadRaw[]; next?: number };
-      leads.push(...(data.result ?? []));
-      if (!data.next) break;
-      start = data.next;
+      const data = (await res.json()) as { result?: BitrixLeadRaw[] };
+      const page = data.result ?? [];
+      leads.push(...page);
+      if (page.length < 50) break;
+      lastId = Number(page[page.length - 1].ID);
       await this.sleep(300);
     }
     return leads;
