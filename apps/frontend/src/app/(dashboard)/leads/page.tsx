@@ -67,6 +67,24 @@ type StagesBreakdownData = { total: number; stages: StageBreakdown[] };
 type PipelineStage = { stageName: string; count: number; percent: number; isWon: boolean; isLost: boolean };
 type PipelineStagesData = { total: number; stages: PipelineStage[] };
 
+type LeadsSummary = {
+  presets: Record<string, number>;
+  custom: { from: string; to: string; count: number } | null;
+  total: number;
+};
+type SalesFunnelStage = { stageId: string; stageName: string; count: number; isWon: boolean; isLost: boolean };
+type SalesFunnel = { categoryId: string; name: string; total: number; newInPeriod: number; stages: SalesFunnelStage[] };
+type SalesFunnelsData = { period: { from: string; to: string }; funnels: SalesFunnel[] };
+
+const LEAD_PRESETS: { key: string; label: string }[] = [
+  { key: '7d', label: '7 дней' },
+  { key: '14d', label: '14 дней' },
+  { key: '28d', label: '28 дней' },
+  { key: '31d', label: '31 день' },
+  { key: '90d', label: '3 месяца' },
+  { key: '180d', label: '6 месяцев' },
+];
+
 function readCookie(name: string): string | null {
   if (typeof document === 'undefined') return null;
   const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
@@ -104,19 +122,30 @@ function LeadsContent() {
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Блоки «Лиды» / «Сделки» (Bitrix доработки) с ручным диапазоном дат
+  const [leadsSummary, setLeadsSummary] = useState<LeadsSummary | null>(null);
+  const [salesFunnels, setSalesFunnels] = useState<SalesFunnelsData | null>(null);
+  const [rangeFrom, setRangeFrom] = useState('');
+  const [rangeTo, setRangeTo] = useState('');
+  const [appliedRange, setAppliedRange] = useState<{ from: string; to: string } | null>(null);
+  const [openFunnel, setOpenFunnel] = useState<string | null>(null);
+
   const token = readCookie('access_token');
 
   const load = useCallback(async () => {
     if (!token) return;
     setLoading(true);
     try {
-      const [s, f, src, d, sb, ps] = await Promise.all([
+      const rangeQs = appliedRange ? `?from=${appliedRange.from}&to=${appliedRange.to}` : '';
+      const [s, f, src, d, sb, ps, ls, sf] = await Promise.all([
         apiFetch<Status>('/bitrix/status', { token }),
         apiFetch<FunnelData>(`/bitrix/funnel?days=${days}`, { token }),
         apiFetch<SourceData[]>(`/bitrix/sources?days=${days}`, { token }),
         apiFetch<Deal[]>(`/bitrix/deals?days=${days}&limit=20`, { token }),
         apiFetch<StagesBreakdownData>(`/bitrix/stages-breakdown?days=${days}`, { token }),
         apiFetch<PipelineStagesData>('/bitrix/pipeline-stages?days=90', { token }).catch(() => null),
+        apiFetch<LeadsSummary>(`/bitrix/leads-summary${rangeQs}`, { token }).catch(() => null),
+        apiFetch<SalesFunnelsData>(`/bitrix/sales-funnels${rangeQs}`, { token }).catch(() => null),
       ]);
       setStatus(s);
       setFunnel(f);
@@ -124,12 +153,14 @@ function LeadsContent() {
       setDeals(d);
       setStagesBreakdown(sb);
       if (ps) setPipelineStages(ps);
+      if (ls) setLeadsSummary(ls);
+      if (sf) setSalesFunnels(sf);
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  }, [token, days]);
+  }, [token, days, appliedRange]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -230,6 +261,116 @@ function LeadsContent() {
       {syncMsg && (
         <div className="text-sm px-4 py-2 rounded-lg bg-muted">{syncMsg}</div>
       )}
+
+      {/* Ручной диапазон дат — общий для блоков «Лиды» и «Сделки» */}
+      <section className="border border-border rounded-xl bg-background p-4 flex flex-wrap items-end gap-3">
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-muted-foreground">С</label>
+          <input
+            type="date"
+            value={rangeFrom}
+            onChange={(e) => setRangeFrom(e.target.value)}
+            className="text-sm px-3 py-1.5 rounded-lg border border-border bg-background"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-muted-foreground">По</label>
+          <input
+            type="date"
+            value={rangeTo}
+            onChange={(e) => setRangeTo(e.target.value)}
+            className="text-sm px-3 py-1.5 rounded-lg border border-border bg-background"
+          />
+        </div>
+        <button
+          onClick={() => rangeFrom && rangeTo && setAppliedRange({ from: rangeFrom, to: rangeTo })}
+          disabled={!rangeFrom || !rangeTo}
+          className="text-sm px-4 py-1.5 rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40"
+        >
+          Применить
+        </button>
+        {appliedRange && (
+          <button
+            onClick={() => { setAppliedRange(null); setRangeFrom(''); setRangeTo(''); }}
+            className="text-sm px-3 py-1.5 rounded-lg border border-border hover:bg-muted"
+          >
+            Сбросить
+          </button>
+        )}
+        <span className="text-xs text-muted-foreground ml-auto">
+          {appliedRange
+            ? `Период: ${appliedRange.from} → ${appliedRange.to}`
+            : 'Сделки: «новых» считаются за последние 28 дней'}
+        </span>
+      </section>
+
+      {/* Блок 1: Лиды (новые crm.lead) по периодам */}
+      <section className="border border-border rounded-xl bg-background p-5">
+        <div className="flex items-baseline justify-between mb-4">
+          <h2 className="font-semibold">Лиды (новые)</h2>
+          <span className="text-xs text-muted-foreground">всего в базе: {formatNumber(leadsSummary?.total ?? 0)}</span>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          {LEAD_PRESETS.map((p) => (
+            <div key={p.key} className="rounded-lg border border-border p-3 text-center">
+              <div className="text-2xl font-bold tabular-nums">
+                {leadsSummary ? formatNumber(leadsSummary.presets[p.key] ?? 0) : '…'}
+              </div>
+              <div className="text-xs text-muted-foreground mt-0.5">{p.label}</div>
+            </div>
+          ))}
+        </div>
+        {leadsSummary?.custom && (
+          <div className="mt-3 rounded-lg bg-primary/10 text-primary p-3 text-sm">
+            За выбранный период ({leadsSummary.custom.from} → {leadsSummary.custom.to}):{' '}
+            <strong>{formatNumber(leadsSummary.custom.count)}</strong> новых лидов
+          </div>
+        )}
+      </section>
+
+      {/* Блок 2: Сделки — 6 воронок продаж, каждая отдельно + drill-down */}
+      <section>
+        <h2 className="text-lg font-semibold mb-3">Сделки по воронкам</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {(salesFunnels?.funnels ?? []).map((fn) => (
+            <div key={fn.categoryId} className="border border-border rounded-xl bg-background overflow-hidden">
+              <div className="px-5 py-4">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium">{fn.name}</span>
+                  <span className="text-xs text-muted-foreground">всего: {formatNumber(fn.total)}</span>
+                </div>
+                <div className="mt-2 flex items-baseline gap-2">
+                  <span className="text-2xl font-bold tabular-nums text-primary">{formatNumber(fn.newInPeriod)}</span>
+                  <span className="text-xs text-muted-foreground">новых за период</span>
+                </div>
+              </div>
+              <button
+                onClick={() => setOpenFunnel((v) => (v === fn.categoryId ? null : fn.categoryId))}
+                className="w-full px-5 py-2 border-t border-border flex items-center justify-between text-sm hover:bg-muted/30 transition-colors"
+              >
+                <span className="text-muted-foreground">Детализация по статусам</span>
+                <ChevronDown className={`size-4 text-muted-foreground transition-transform ${openFunnel === fn.categoryId ? 'rotate-180' : ''}`} />
+              </button>
+              {openFunnel === fn.categoryId && (
+                <div className="border-t border-border divide-y divide-border">
+                  {fn.stages.length === 0 ? (
+                    <div className="px-5 py-3 text-sm text-muted-foreground">Нет сделок</div>
+                  ) : (
+                    fn.stages.map((s) => (
+                      <div key={s.stageId} className="px-5 py-2 flex items-center justify-between text-sm">
+                        <span className={s.isWon ? 'text-success' : s.isLost ? 'text-danger' : ''}>
+                          {s.stageName}{s.isWon && ' ✅'}{s.isLost && ' ✕'}
+                        </span>
+                        <span className="font-semibold tabular-nums">{formatNumber(s.count)}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
 
       {/* KPI */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

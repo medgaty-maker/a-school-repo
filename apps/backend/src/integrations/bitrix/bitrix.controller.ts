@@ -84,4 +84,16 @@ export class BitrixController {
   pipelineStages(@Query('days') days?: string) {
     return this.bitrix.getPipelineStages(days ? parseInt(days, 10) : 90);
   }
+
+  // Блок «Лиды»: новые crm.lead за пресеты/произвольный период
+  @Get('leads-summary')
+  leadsSummary(@Query('from') from?: string, @Query('to') to?: string) {
+    return this.bitrix.getLeadsSummary(from, to);
+  }
+
+  // Блок «Сделки»: 6 воронок продаж, каждая отдельно (total + newInPeriod + stages)
+  @Get('sales-funnels')
+  salesFunnels(@Query('from') from?: string, @Query('to') to?: string) {
+    return this.bitrix.getSalesFunnels(from, to);
+  }
 }

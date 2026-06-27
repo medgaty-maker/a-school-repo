@@ -242,6 +242,21 @@ model BitrixDeal {
   @@index([isWon, isLost])
 }
 
+// Лиды Bitrix (crm.lead) — для блока «Лиды»: новые созданные за период
+model BitrixLead {
+  id         String   @id @default(cuid())
+  bitrixId   Int      @unique
+  title      String?
+  statusId   String?
+  statusName String?
+  sourceId   String?
+  dateCreate DateTime
+  dateModify DateTime?
+  syncedAt   DateTime @default(now())
+
+  @@index([dateCreate])
+}
+
 // --- Meta Ads (ТЗ §8 / §15.2) ---
 
 model MetaConfig {

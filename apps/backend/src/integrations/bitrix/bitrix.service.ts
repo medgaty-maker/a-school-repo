@@ -24,6 +24,15 @@ interface BitrixDealRaw {
   CLOSEDATE?: string;
 }
 
+interface BitrixLeadRaw {
+  ID: string;
+  TITLE?: string;
+  STATUS_ID?: string;
+  SOURCE_ID?: string;
+  DATE_CREATE: string;
+  DATE_MODIFY?: string;
+}
+
 interface BitrixStage {
   STATUS_ID: string;
   NAME: string;
@@ -117,7 +126,7 @@ export class BitrixService {
 
       const stageMap = new Map<string, string>(stages.map((s) => [s.STATUS_ID, s.NAME]));
       const categoryMap = new Map<string, string>(categories.map((c) => [c.ID, c.NAME]));
-      categoryMap.set('0', 'Общая');
+      categoryMap.set('0', 'Набор в школу'); // основная воронка (crm.dealcategory.default)
 
       for (const d of deals) {
         try {
@@ -180,6 +189,40 @@ export class BitrixService {
         }
       }
 
+      // Синк лидов (crm.lead) — для блока «Лиды»
+      let leadsSynced = 0;
+      try {
+        const leads = await this.fetchAllLeads(webhookUrl);
+        for (const l of leads) {
+          try {
+            await this.prisma.bitrixLead.upsert({
+              where: { bitrixId: parseInt(l.ID) },
+              update: {
+                title: l.TITLE ?? null,
+                statusId: l.STATUS_ID ?? null,
+                sourceId: l.SOURCE_ID ?? null,
+                dateCreate: new Date(l.DATE_CREATE),
+                dateModify: l.DATE_MODIFY ? new Date(l.DATE_MODIFY) : null,
+                syncedAt: new Date(),
+              },
+              create: {
+                bitrixId: parseInt(l.ID),
+                title: l.TITLE ?? null,
+                statusId: l.STATUS_ID ?? null,
+                sourceId: l.SOURCE_ID ?? null,
+                dateCreate: new Date(l.DATE_CREATE),
+                dateModify: l.DATE_MODIFY ? new Date(l.DATE_MODIFY) : null,
+              },
+            });
+            leadsSynced++;
+          } catch (e) {
+            this.logger.warn(`Failed to upsert lead ${l.ID}: ${(e as Error).message}`);
+          }
+        }
+      } catch (e) {
+        this.logger.warn(`Bitrix leads sync failed: ${(e as Error).message}`);
+      }
+
       await this.prisma.bitrixConfig.updateMany({ data: { lastSyncAt: new Date() } });
 
       await this.prisma.integrationLog.create({
@@ -191,7 +234,7 @@ export class BitrixService {
         },
       });
 
-      this.logger.log(`Bitrix24 sync complete: ${synced} deals, ${errors} errors`);
+      this.logger.log(`Bitrix24 sync complete: ${synced} deals, ${leadsSynced} leads, ${errors} errors`);
     } catch (e) {
       await this.prisma.integrationLog.create({
         data: {
@@ -349,18 +392,31 @@ export class BitrixService {
 
   // POST в Bitrix с ретраями на 429/503 (rate limit) — экспоненциальный backoff
   private async bitrixPost(url: string, body: unknown, tries = 6): Promise<Response> {
+    let lastErr: unknown;
     for (let i = 0; i < tries; i++) {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      } catch (e) {
+        // Сетевой сбой (fetch failed / ECONNRESET / timeout) — Bitrix периодически рвёт
+        // соединение на больших выгрузках. Ретраим с бэкоффом, как и rate limit.
+        lastErr = e;
+        const wait = Math.min(1500 * 2 ** i, 20000);
+        this.logger.warn(`Bitrix сетевая ошибка (${(e as Error).message}), повтор через ${wait}мс (${i + 1}/${tries})`);
+        await this.sleep(wait);
+        continue;
+      }
       if (res.status !== 429 && res.status !== 503) return res;
       const retryAfter = Number(res.headers.get('Retry-After')) || 0;
       const wait = retryAfter > 0 ? retryAfter * 1000 : Math.min(1500 * 2 ** i, 20000);
       this.logger.warn(`Bitrix ${res.status} (rate limit), повтор через ${wait}мс (${i + 1}/${tries})`);
       await this.sleep(wait);
     }
+    if (lastErr) throw new Error(`Bitrix API error: сеть (${(lastErr as Error).message}, исчерпаны ретраи)`);
     throw new Error('Bitrix API error: 429 (исчерпаны ретраи)');
   }
 
@@ -392,6 +448,28 @@ export class BitrixService {
     }
 
     return deals;
+  }
+
+  private async fetchAllLeads(webhookUrl: string): Promise<BitrixLeadRaw[]> {
+    const leads: BitrixLeadRaw[] = [];
+    let start = 0;
+    const since = new Date(Date.now() - 365 * 24 * 3600 * 1000).toISOString().split('T')[0];
+
+    while (true) {
+      const res = await this.bitrixPost(`${webhookUrl}crm.lead.list.json`, {
+        order: { DATE_CREATE: 'DESC' },
+        filter: { '>=DATE_CREATE': since },
+        select: ['ID', 'TITLE', 'STATUS_ID', 'SOURCE_ID', 'DATE_CREATE', 'DATE_MODIFY'],
+        start,
+      });
+      if (!res.ok) throw new Error(`Bitrix API error: ${res.status}`);
+      const data = (await res.json()) as { result?: BitrixLeadRaw[]; next?: number };
+      leads.push(...(data.result ?? []));
+      if (!data.next) break;
+      start = data.next;
+      await this.sleep(300);
+    }
+    return leads;
   }
 
   async getStagesBreakdown(daysBack: number, categoryIds?: string[]) {
@@ -553,6 +631,77 @@ export class BitrixService {
       total: deals.length,
       pipelines: [...byPipeline.entries()].map(([name, v]) => ({ name, ...v })).sort((a, b) => b.total - a.total),
       isFiltered,
+    };
+  }
+
+  // === Блок «Лиды»: количество лидов (crm.lead), СОЗДАННЫХ за период ===
+  async getLeadsSummary(from?: string, to?: string) {
+    const now = Date.now();
+    const presetDays = [7, 14, 28, 31, 90, 180];
+    const presets: Record<string, number> = {};
+    for (const d of presetDays) {
+      const since = new Date(now - d * 86_400_000);
+      presets[`${d}d`] = await this.prisma.bitrixLead.count({ where: { dateCreate: { gte: since } } });
+    }
+    const total = await this.prisma.bitrixLead.count();
+
+    let custom: { from: string; to: string; count: number } | null = null;
+    if (from && to) {
+      const f = new Date(from);
+      const t = new Date(`${to}T23:59:59`);
+      const count = await this.prisma.bitrixLead.count({ where: { dateCreate: { gte: f, lte: t } } });
+      custom = { from, to, count };
+    }
+
+    return { presets, custom, total };
+  }
+
+  // === Блок «Сделки»: 6 воронок продаж, каждая отдельно ===
+  // total — всего сделок в воронке; newInPeriod — созданных за период; stages — drill-down по статусам.
+  private static readonly SALES_FUNNELS: { id: string; name: string }[] = [
+    { id: '28', name: 'Резерв' },
+    { id: '52', name: '2026-2027 набор в 1 класс' },
+    { id: '48', name: '1.Продажа' },
+    { id: '0', name: 'Набор в школу' },
+    { id: '56', name: 'Школа Пансион' },
+    { id: '58', name: 'Лагерь — сделки' },
+  ];
+
+  async getSalesFunnels(from?: string, to?: string) {
+    const ids = BitrixService.SALES_FUNNELS.map((f) => f.id);
+    const fromDate = from ? new Date(from) : new Date(Date.now() - 28 * 86_400_000);
+    const toDate = to ? new Date(`${to}T23:59:59`) : new Date();
+
+    const deals = await this.prisma.bitrixDeal.findMany({
+      where: { categoryId: { in: ids } },
+      select: { categoryId: true, stageId: true, stageName: true, dateCreate: true, isWon: true, isLost: true },
+    });
+
+    const funnels = BitrixService.SALES_FUNNELS.map(({ id, name }) => {
+      const fd = deals.filter((d) => (d.categoryId ?? '0') === id);
+      const total = fd.length;
+      const newInPeriod = fd.filter((d) => d.dateCreate >= fromDate && d.dateCreate <= toDate).length;
+
+      const stageMap = new Map<string, { stageId: string; stageName: string; count: number; isWon: boolean; isLost: boolean }>();
+      for (const d of fd) {
+        const cur = stageMap.get(d.stageId) ?? {
+          stageId: d.stageId,
+          stageName: this.humanizeStage(d.stageId, d.stageName, d.isWon, d.isLost),
+          count: 0,
+          isWon: d.isWon,
+          isLost: d.isLost,
+        };
+        cur.count++;
+        stageMap.set(d.stageId, cur);
+      }
+      const stages = [...stageMap.values()].sort((a, b) => b.count - a.count);
+
+      return { categoryId: id, name, total, newInPeriod, stages };
+    });
+
+    return {
+      period: { from: fromDate.toISOString().split('T')[0], to: toDate.toISOString().split('T')[0] },
+      funnels,
     };
   }
 }
