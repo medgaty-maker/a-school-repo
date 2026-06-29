@@ -1,4 +1,5 @@
 import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { Platform, IntegrationStatus, IntegrationCallStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CryptoService } from '../crypto.service';
@@ -599,6 +600,63 @@ export class MetaService {
       throw new BadRequestException(`Instagram long-lived token exchange failed: ${data.error?.message ?? 'no token'}`);
     }
     return { access_token: data.access_token, expires_in: data.expires_in };
+  }
+
+  // Продление долгоживущего IG-токена (60 дней) без участия пользователя.
+  // Работает, пока токен ещё валиден (старше 24ч и не истёк). Истёкшие — только ручной reconnect.
+  private async refreshLongLivedToken(token: string): Promise<{ access_token: string; expires_in?: number }> {
+    const url = new URL(`${IG_API_BASE}/refresh_access_token`);
+    url.searchParams.set('grant_type', 'ig_refresh_token');
+    url.searchParams.set('access_token', token);
+    const res = await fetch(url.toString());
+    const data = (await res.json()) as { access_token?: string; expires_in?: number; error?: { message: string } };
+    if (data.error || !data.access_token) {
+      throw new Error(data.error?.message ?? 'no token in response');
+    }
+    return { access_token: data.access_token, expires_in: data.expires_in };
+  }
+
+  // Ежедневно продлеваем все активные IG-токены, у которых до истечения < 15 дней.
+  // Каждое продление даёт ещё +60 дней, поэтому токен не истекает, пока идут синки.
+  @Cron(CronExpression.EVERY_DAY_AT_4AM, { name: 'ig-token-refresh' })
+  async refreshInstagramTokens(): Promise<{ refreshed: number; failed: number }> {
+    const platforms = await this.prisma.projectPlatform.findMany({
+      where: { platform: Platform.INSTAGRAM, status: IntegrationStatus.ACTIVE, accessTokenEnc: { not: null } },
+    });
+    let refreshed = 0;
+    let failed = 0;
+    const soon = Date.now() + 15 * 24 * 3600 * 1000; // продлеваем за 15 дней до конца
+    for (const pp of platforms) {
+      // Если срок известен и ещё далеко — пропускаем (Instagram запрещает частое продление)
+      if (pp.tokenExpiresAt && pp.tokenExpiresAt.getTime() > soon) continue;
+      try {
+        const token = this.crypto.decrypt(pp.accessTokenEnc!);
+        const r = await this.refreshLongLivedToken(token);
+        await this.prisma.projectPlatform.update({
+          where: { id: pp.id },
+          data: {
+            accessTokenEnc: this.crypto.encrypt(r.access_token),
+            tokenExpiresAt: new Date(Date.now() + (r.expires_in ?? 60 * 24 * 3600) * 1000),
+            lastError: null,
+          },
+        });
+        refreshed++;
+        this.logger.log(`Instagram token refreshed [${pp.id}] +${Math.round((r.expires_in ?? 0) / 86400)}д`);
+      } catch (e) {
+        failed++;
+        const msg = (e as Error).message;
+        this.logger.warn(`Instagram token refresh failed [${pp.id}]: ${msg}`);
+        // Токен истёк/невалиден → помечаем как EXPIRED, чтобы UI показал «переподключите»
+        if (/expire|invalid|OAuth/i.test(msg)) {
+          await this.prisma.projectPlatform.update({
+            where: { id: pp.id },
+            data: { status: IntegrationStatus.EXPIRED, lastError: 'Токен Instagram истёк — переподключите' },
+          }).catch(() => null);
+        }
+      }
+    }
+    if (refreshed || failed) this.logger.log(`IG token refresh: продлено ${refreshed}, ошибок ${failed}`);
+    return { refreshed, failed };
   }
 
   private requireEnv(key: string): string {

@@ -143,4 +143,11 @@ export class MetaController {
   syncInstagram(@Param('projectPlatformId') projectPlatformId: string) {
     return this.meta.captureInstagramSnapshot(projectPlatformId);
   }
+
+  // Ручной запуск автопродления IG-токенов (то же, что делает ежедневный cron)
+  @Roles(Role.ADMIN, Role.MARKETING_DIRECTOR)
+  @Post('instagram/refresh-tokens')
+  refreshInstagramTokens() {
+    return this.meta.refreshInstagramTokens();
+  }
 }
