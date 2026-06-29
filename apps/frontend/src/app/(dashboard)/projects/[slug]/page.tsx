@@ -4,7 +4,7 @@ import { Suspense } from 'react';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Eye, Users, Heart, Play, Target, BookOpen, TrendingUp, Megaphone, Sparkles, AlertCircle, TrendingDown, Info } from 'lucide-react';
+import { ArrowLeft, Eye, Users, Heart, Play, Target, BookOpen, TrendingUp, Megaphone, Sparkles, AlertCircle, TrendingDown, Info, ChevronDown } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip,
   ResponsiveContainer, Legend, CartesianGrid,
@@ -66,7 +66,7 @@ type AdInsights = { leads: number; spend: number; impressions: number; clicks: n
 type LeadBreakdown = { total: number };
 type PipelineFunnel = {
   won: number; inProgress: number; lost: number; total: number; totalAmount: number;
-  pipelines?: Array<{ name: string; won: number; inProgress: number; total: number }>;
+  pipelines?: Array<{ categoryId: string; name: string; won: number; inProgress: number; total: number }>;
 };
 type MetaDaily = Array<{ date: string; impressions: number; spend: number; leads: number }>;
 type YandexDaily = Array<{ date: string; visits: number }>;
@@ -121,14 +121,6 @@ function MultiPlatformChart({
     : [...metaLeadsMap.keys()]
   ).filter(isValidDay).sort();
 
-  if (allDays.length === 0) {
-    return (
-      <div className="border border-border rounded-xl p-8 text-center text-sm text-muted-foreground bg-background">
-        Подключите YouTube, Instagram или Meta Ads в «Настройках» для просмотра динамики.
-      </div>
-    );
-  }
-
   const data = allDays.map((day) => {
     const label = new Date(day).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' });
     if (metric === 'leads') {
@@ -159,6 +151,13 @@ function MultiPlatformChart({
           Лиды
         </button>
       </div>
+      {allDays.length === 0 ? (
+        <div className="h-[240px] flex items-center justify-center text-center text-sm text-muted-foreground">
+          {metric === 'leads'
+            ? 'Нет данных по лидам за период. Подключите Meta Ads в «Настройках».'
+            : 'Подключите YouTube, Instagram или Meta Ads в «Настройках» для просмотра динамики.'}
+        </div>
+      ) : (
       <ResponsiveContainer width="100%" height={240}>
         <LineChart data={data} margin={{ top: 4, right: 50, left: -20, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.1)" />
@@ -207,6 +206,7 @@ function MultiPlatformChart({
           )}
         </LineChart>
       </ResponsiveContainer>
+      )}
     </div>
   );
 }
@@ -233,6 +233,7 @@ function ProjectDetailContent() {
   const [aiInsights, setAiInsights] = useState<AiInsights | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [kpiLoading, setKpiLoading] = useState(true);
+  const [salesOpen, setSalesOpen] = useState(false);
 
   const { period } = usePeriod();
   const periodLabel = PERIODS.find((p) => p.value === period)?.label ?? period;
@@ -272,7 +273,7 @@ function ProjectDetailContent() {
     Promise.all([
       apiFetch<AdInsights>(`/integrations/meta/ads/insights?datePreset=last_28d&project=${slug}`, { token }).catch(() => null),
       apiFetch<LeadBreakdown>(`/integrations/yandex-metrica/leads?datePreset=last_28d&project=${slug}`, { token }).catch(() => null),
-      apiFetch<PipelineFunnel>(`/bitrix/pipeline-funnel?days=90&project=${slug}`, { token }).catch(() => null),
+      apiFetch<PipelineFunnel>(`/bitrix/pipeline-funnel?days=30&project=${slug}`, { token }).catch(() => null),
       apiFetch<MetaDaily>(`/integrations/meta/ads/insights-daily?datePreset=last_28d&project=${slug}`, { token }).catch(() => null),
       apiFetch<YandexDaily>(`/integrations/yandex-metrica/visits-daily?datePreset=last_28d&project=${slug}`, { token }).catch(() => null),
     ]).then(([meta, metrica, bitrix, metaDailyData, yandexDailyData]) => {
@@ -314,6 +315,15 @@ function ProjectDetailContent() {
   const totalLeads = metaLeads + metricaLeads;
   const totalVideos = yt?.metrics?.videos_total ?? 0;
   const avgRetention = yt?.metrics?.avg_view_percentage_28d ?? 0;
+
+  // Разбивка продаж: Лагерь (categoryId 58) vs Школа (все остальные воронки)
+  const salesPipelines = bitrixFunnel?.pipelines ?? [];
+  const campSales = salesPipelines
+    .filter((p) => p.categoryId === '58')
+    .reduce((s, p) => s + p.won, 0);
+  const schoolSales = salesPipelines
+    .filter((p) => p.categoryId !== '58')
+    .reduce((s, p) => s + p.won, 0);
 
   return (
     <div className="p-6 space-y-6">
@@ -369,19 +379,45 @@ function ProjectDetailContent() {
             pendingNote="Подключите Meta / Метрику"
           />
           <KpiCard
-            label="Записи"
+            label="Сделки"
             value={bitrixActive || null}
             icon={<BookOpen className="size-4" />}
-            hint="Источник: Bitrix24 (сделки в работе)"
+            hint="Bitrix24 · в работе, 30 дней"
             pendingNote="Подключите Bitrix24"
           />
-          <KpiCard
-            label="Продажи"
-            value={bitrixWon || null}
-            icon={<TrendingUp className="size-4" />}
-            hint="Источник: Bitrix24 (выигранные)"
-            pendingNote="Подключите Bitrix24"
-          />
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setSalesOpen((v) => !v)}
+              className="group block w-full h-full text-left rounded-xl ring-1 ring-primary/30 hover:ring-2 hover:ring-primary/60 transition"
+              title="Показать разбивку Школа / Лагерь"
+            >
+              <KpiCard
+                label="Продажи"
+                value={bitrixWon || null}
+                icon={<ChevronDown className={`size-4 text-primary transition-transform ${salesOpen ? 'rotate-180' : ''}`} />}
+                hint="Bitrix24 · 30 дней · нажмите для разбивки"
+                pendingNote="Подключите Bitrix24"
+              />
+            </button>
+            {/* Маленький список прямо под карточкой */}
+            {salesOpen && (
+              <div className="absolute z-20 top-full left-0 right-0 mt-1 border border-border rounded-lg bg-background shadow-lg divide-y divide-border">
+                <div className="px-3 py-2 flex items-center justify-between text-sm">
+                  <span>Школа</span>
+                  <span className="font-semibold tabular-nums">{formatNumber(schoolSales)}</span>
+                </div>
+                <div className="px-3 py-2 flex items-center justify-between text-sm">
+                  <span>Лагерь</span>
+                  <span className="font-semibold tabular-nums">{formatNumber(campSales)}</span>
+                </div>
+                <div className="px-3 py-1.5 flex items-center justify-between text-xs text-muted-foreground">
+                  <span>Всего</span>
+                  <span className="tabular-nums">{formatNumber(schoolSales + campSales)}</span>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </section>
 

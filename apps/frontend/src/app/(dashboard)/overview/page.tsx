@@ -119,9 +119,6 @@ function OverviewContent() {
         </p>
       </header>
 
-      {/* Инсайты и алерты */}
-      <InsightsBlock token={token} />
-
       {/* §6.2 — Главные KPI */}
       <section>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -226,43 +223,42 @@ function OverviewContent() {
         />
       </section>
 
-      {/* §6.5 — Мини-воронка лидов */}
-      {bitrixStages.length > 0 && (
-        <section>
-          <div className="border border-border rounded-xl bg-background p-5">
-            <div className="flex items-center justify-between mb-4">
-              <div className="font-semibold">Воронка лидов — Bitrix24 (§6.5)</div>
-              <Link href="/leads" className="text-xs text-primary flex items-center gap-1 hover:underline">
-                Подробнее <ArrowRight className="size-3" />
-              </Link>
-            </div>
-            <div className="space-y-2">
-              {bitrixStages.slice(0, 6).map((s) => {
-                const max = Math.max(...bitrixStages.map((x) => x.count));
-                const pct = max > 0 ? (s.count / max) * 100 : 0;
-                const color = s.isWon ? 'bg-success' : s.isLost ? 'bg-danger' : 'bg-primary';
-                const label = s.stageName?.replace(/^C\d+:/i, '') ?? s.stageId;
-                return (
-                  <div key={s.stageId} className="flex items-center gap-3">
-                    <div className="w-36 text-xs text-muted-foreground truncate shrink-0">{label}</div>
-                    <div className="flex-1 bg-muted rounded-full h-2">
-                      <div className={`${color} h-2 rounded-full transition-all`} style={{ width: `${pct}%` }} />
-                    </div>
-                    <div className="w-10 text-xs text-right tabular-nums">{formatNumber(s.count)}</div>
-                  </div>
-                );
-              })}
-            </div>
-            {bitrixSummary && (
-              <div className="mt-3 pt-3 border-t border-border flex gap-6 text-xs text-muted-foreground">
-                <span>Всего: <strong className="text-foreground">{formatNumber(bitrixSummary.total)}</strong></span>
-                <span>Выиграно: <strong className="text-success">{formatNumber(bitrixSummary.won)}</strong></span>
-                <span>Конверсия: <strong className="text-foreground">{bitrixSummary.conversionRate}%</strong></span>
-              </div>
-            )}
+      {/* §6.5 — Лиды / сделки / продажи за период */}
+      <section>
+        <div className="border border-border rounded-xl bg-background p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div className="font-semibold">Лиды, сделки и продажи · {periodLabel.toLowerCase()}</div>
+            <Link href="/leads" className="text-xs text-primary flex items-center gap-1 hover:underline">
+              Подробнее <ArrowRight className="size-3" />
+            </Link>
           </div>
-        </section>
-      )}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="rounded-lg border border-border p-4">
+              <div className="text-xs text-muted-foreground">Лиды (Meta Ads)</div>
+              <div className="text-2xl font-bold tabular-nums mt-1">
+                {metaInsights ? formatNumber(metaInsights.leads) : '—'}
+              </div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">лид-формы Meta</div>
+            </div>
+            <div className="rounded-lg border border-border p-4">
+              <div className="text-xs text-muted-foreground">Созданные сделки</div>
+              <div className="text-2xl font-bold tabular-nums mt-1">
+                {bitrixSummary ? formatNumber(bitrixSummary.total) : '—'}
+              </div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">Bitrix24 · созданы за период</div>
+            </div>
+            <div className="rounded-lg border border-border p-4">
+              <div className="text-xs text-muted-foreground">Продажи</div>
+              <div className="text-2xl font-bold tabular-nums mt-1 text-success">
+                {bitrixSummary ? formatNumber(bitrixSummary.won) : '—'}
+              </div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">
+                Bitrix24{bitrixSummary ? ` · конверсия ${bitrixSummary.conversionRate}%` : ''}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
 
       {/* §6.7 — Топ и антирейтинг контента */}
       {token && (
@@ -314,6 +310,9 @@ function OverviewContent() {
           </ul>
         </section>
       )}
+
+      {/* Инсайты и алерты — внизу страницы */}
+      <InsightsBlock token={token} />
     </div>
   );
 }

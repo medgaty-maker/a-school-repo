@@ -24,7 +24,7 @@ export function KpiCard({
   label, value, unit, hint, trend, status = 'neutral', icon, pending, pendingNote,
 }: KpiCardProps) {
   return (
-    <div className="border border-border rounded-xl p-5 bg-background flex flex-col gap-2">
+    <div className="h-full border border-border rounded-xl p-5 bg-background flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <div className="text-sm text-muted-foreground">{label}</div>
         {icon ? <div className="text-muted-foreground">{icon}</div> : null}

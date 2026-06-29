@@ -262,8 +262,9 @@ export class MetaService {
     if (json.error) return [];
     return (json.data ?? []).map((d: any) => {
       const actions: Array<{ action_type: string; value: string }> = d.actions ?? [];
+      const LEAD_ACTIONS = ['lead', 'onsite_conversion.lead_grouped', 'offsite_conversion.fb_pixel_lead', 'onsite_conversion.messaging_conversation_started_7d'];
       const leads = actions
-        .filter((a) => a.action_type === 'lead' || a.action_type === 'onsite_conversion.lead_grouped')
+        .filter((a) => LEAD_ACTIONS.includes(a.action_type))
         .reduce((sum, a) => sum + Number(a.value ?? 0), 0);
       return {
         date: String(d.date_start),
@@ -619,6 +620,8 @@ export class MetaService {
       'lead',
       'onsite_conversion.lead_grouped',
       'offsite_conversion.fb_pixel_lead',
+      // Начатые переписки (Messenger/WhatsApp/Instagram Direct) — основной источник лидов
+      'onsite_conversion.messaging_conversation_started_7d',
     ]);
     const purchaseValue = this.extractActionValue(raw.action_values, [
       'purchase',
@@ -740,37 +743,25 @@ export class MetaService {
       this.logger.warn(`Instagram [${pp.id}] insights fetch error: ${(e as Error).message}`);
     }
 
-    // Try impressions first (includes paid + organic), fall back to views (organic only)
+    // Просмотры по аккаунту за 28 дней. Важно: метрика `views` поддерживает только
+    // period=day и ИГНОРИРУЕТ period=days_28 (вернёт просмотры за 1 день). Чтобы получить
+    // сумму за 28 дней, задаём диапазон since/until + metric_type=total_value (агрегат за период).
     try {
-      const impRes = await fetch(
-        `${IG_API_BASE}/${igId}/insights?metric=impressions&period=days_28&metric_type=total_value&access_token=${encodedToken}`,
+      const until = Math.floor(Date.now() / 1000);
+      const since = until - 28 * 24 * 3600;
+      const viewsRes = await fetch(
+        `${IG_API_BASE}/${igId}/insights?metric=views&period=day&metric_type=total_value&since=${since}&until=${until}&access_token=${encodedToken}`,
       );
-      const impJson = (await impRes.json()) as {
-        data?: Array<{ name: string; total_value?: { value: number }; values?: Array<{ value: number }> }>;
+      const viewsJson = (await viewsRes.json()) as {
+        data?: Array<{ name: string; total_value?: { value: number } }>;
         error?: { message: string };
       };
-      this.logger.log(`Instagram [${pp.id}] impressions raw: ${JSON.stringify(impJson).slice(0, 300)}`);
-      if (!impJson.error && impJson.data) {
-        const m = impJson.data.find((d) => d.name === 'impressions');
-        if (m?.total_value?.value) {
-          impressions28d = m.total_value.value;
-          this.logger.log(`Instagram [${pp.id}] impressions (paid+organic): ${impressions28d}`);
-        }
-      }
-      // fallback to organic-only views if impressions unavailable
-      if (impressions28d === 0) {
-        const viewsRes = await fetch(
-          `${IG_API_BASE}/${igId}/insights?metric=views&period=days_28&metric_type=total_value&access_token=${encodedToken}`,
-        );
-        const viewsJson = (await viewsRes.json()) as {
-          data?: Array<{ name: string; total_value?: { value: number } }>;
-          error?: { message: string };
-        };
-        if (!viewsJson.error && viewsJson.data) {
-          const m = viewsJson.data.find((d) => d.name === 'views');
-          if (m?.total_value?.value != null) impressions28d = m.total_value.value;
-        }
-        if (impJson.error) this.logger.warn(`Instagram [${pp.id}] impressions unavailable: ${impJson.error.message}`);
+      this.logger.log(`Instagram [${pp.id}] views raw: ${JSON.stringify(viewsJson).slice(0, 300)}`);
+      if (!viewsJson.error && viewsJson.data) {
+        const m = viewsJson.data.find((d) => d.name === 'views');
+        if (m?.total_value?.value != null) impressions28d = m.total_value.value;
+      } else if (viewsJson.error) {
+        this.logger.warn(`Instagram [${pp.id}] views unavailable: ${viewsJson.error.message}`);
       }
     } catch (e) {
       this.logger.warn(`Instagram [${pp.id}] views fetch error: ${(e as Error).message}`);

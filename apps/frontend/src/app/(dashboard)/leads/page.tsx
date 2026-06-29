@@ -1,12 +1,11 @@
 'use client';
 
 import { Suspense } from 'react';
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { Users, TrendingUp, CheckCircle, XCircle, RefreshCw, ChevronDown } from 'lucide-react';
 import { apiFetch } from '@/lib/api-client';
 import { KpiCard } from '@/components/kpi-card';
 import { DonutChart } from '@/components/widgets/donut-chart';
-import { usePeriod, PERIODS } from '@/lib/use-period';
 import { formatNumber } from '@/lib/utils';
 import {
   BarChart,
@@ -67,10 +66,11 @@ type StagesBreakdownData = { total: number; stages: StageBreakdown[] };
 type PipelineStage = { stageName: string; count: number; percent: number; isWon: boolean; isLost: boolean };
 type PipelineStagesData = { total: number; stages: PipelineStage[] };
 
+type LeadsBucket = { leads: number; deals: number; total: number };
 type LeadsSummary = {
-  presets: Record<string, number>;
-  custom: { from: string; to: string; count: number } | null;
-  total: number;
+  presets: Record<string, LeadsBucket>;
+  custom: ({ from: string; to: string } & LeadsBucket) | null;
+  total: LeadsBucket;
 };
 type SalesFunnelStage = { stageId: string; stageName: string; count: number; isWon: boolean; isLost: boolean };
 type SalesFunnel = { categoryId: string; name: string; total: number; newInPeriod: number; stages: SalesFunnelStage[] };
@@ -83,6 +83,14 @@ const LEAD_PRESETS: { key: string; label: string }[] = [
   { key: '31d', label: '31 день' },
   { key: '90d', label: '3 месяца' },
   { key: '180d', label: '6 месяцев' },
+];
+
+const QUICK_PRESETS: { days: number; label: string }[] = [
+  { days: 7, label: '7 дней' },
+  { days: 14, label: '14 дней' },
+  { days: 30, label: '30 дней' },
+  { days: 90, label: '3 месяца' },
+  { days: 180, label: '6 месяцев' },
 ];
 
 function readCookie(name: string): string | null {
@@ -106,10 +114,6 @@ export default function LeadsPage() {
 }
 
 function LeadsContent() {
-  const { period } = usePeriod();
-  const days = PERIODS.find((p) => p.value === period)?.days ?? 30;
-  const periodLabel = PERIODS.find((p) => p.value === period)?.label ?? period;
-
   const [status, setStatus] = useState<Status | null>(null);
   const [funnel, setFunnel] = useState<FunnelData | null>(null);
   const [sources, setSources] = useState<SourceData[]>([]);
@@ -122,13 +126,36 @@ function LeadsContent() {
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Блоки «Лиды» / «Сделки» (Bitrix доработки) с ручным диапазоном дат
   const [leadsSummary, setLeadsSummary] = useState<LeadsSummary | null>(null);
   const [salesFunnels, setSalesFunnels] = useState<SalesFunnelsData | null>(null);
-  const [rangeFrom, setRangeFrom] = useState('');
-  const [rangeTo, setRangeTo] = useState('');
-  const [appliedRange, setAppliedRange] = useState<{ from: string; to: string } | null>(null);
   const [openFunnel, setOpenFunnel] = useState<string | null>(null);
+
+  // Фильтр периода для детальных блоков: быстрые пресеты по дням или свой диапазон.
+  // По умолчанию 90 дней — чтобы совпадало с карточкой «Продажи» на странице проекта.
+  const [filterDays, setFilterDays] = useState(90);
+  const [customMode, setCustomMode] = useState(false);
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+
+  const effective = useMemo(() => {
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+    if (customMode && customFrom && customTo) {
+      const days = Math.max(
+        1,
+        Math.round((new Date(customTo).getTime() - new Date(customFrom).getTime()) / 86_400_000) + 1,
+      );
+      return { from: customFrom, to: customTo, days, label: `${customFrom} → ${customTo}` };
+    }
+    return {
+      from: fmt(new Date(Date.now() - filterDays * 86_400_000)),
+      to: fmt(new Date()),
+      days: filterDays,
+      label: QUICK_PRESETS.find((q) => q.days === filterDays)?.label ?? `${filterDays} дн.`,
+    };
+  }, [customMode, customFrom, customTo, filterDays]);
+
+  const days = effective.days;
+  const periodLabel = effective.label;
 
   const token = readCookie('access_token');
 
@@ -136,7 +163,7 @@ function LeadsContent() {
     if (!token) return;
     setLoading(true);
     try {
-      const rangeQs = appliedRange ? `?from=${appliedRange.from}&to=${appliedRange.to}` : '';
+      const rangeQs = `?from=${effective.from}&to=${effective.to}`;
       const [s, f, src, d, sb, ps, ls, sf] = await Promise.all([
         apiFetch<Status>('/bitrix/status', { token }),
         apiFetch<FunnelData>(`/bitrix/funnel?days=${days}`, { token }),
@@ -144,7 +171,8 @@ function LeadsContent() {
         apiFetch<Deal[]>(`/bitrix/deals?days=${days}&limit=20`, { token }),
         apiFetch<StagesBreakdownData>(`/bitrix/stages-breakdown?days=${days}`, { token }),
         apiFetch<PipelineStagesData>('/bitrix/pipeline-stages?days=90', { token }).catch(() => null),
-        apiFetch<LeadsSummary>(`/bitrix/leads-summary${rangeQs}`, { token }).catch(() => null),
+        // Обзор «Новые сделки» — фиксированные периоды, не зависит от фильтра
+        apiFetch<LeadsSummary>('/bitrix/leads-summary', { token }).catch(() => null),
         apiFetch<SalesFunnelsData>(`/bitrix/sales-funnels${rangeQs}`, { token }).catch(() => null),
       ]);
       setStatus(s);
@@ -160,7 +188,7 @@ function LeadsContent() {
     } finally {
       setLoading(false);
     }
-  }, [token, days, appliedRange]);
+  }, [token, days, effective.from, effective.to]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -262,75 +290,91 @@ function LeadsContent() {
         <div className="text-sm px-4 py-2 rounded-lg bg-muted">{syncMsg}</div>
       )}
 
-      {/* Ручной диапазон дат — общий для блоков «Лиды» и «Сделки» */}
-      <section className="border border-border rounded-xl bg-background p-4 flex flex-wrap items-end gap-3">
-        <div className="flex flex-col gap-1">
-          <label className="text-xs text-muted-foreground">С</label>
-          <input
-            type="date"
-            value={rangeFrom}
-            onChange={(e) => setRangeFrom(e.target.value)}
-            className="text-sm px-3 py-1.5 rounded-lg border border-border bg-background"
-          />
+      {/* Обзор: новые сделки по фиксированным периодам (не зависит от фильтра) */}
+      <section className="border border-border rounded-xl bg-background p-5">
+        <div className="flex items-baseline justify-between mb-1">
+          <h2 className="font-semibold">Новые сделки</h2>
+          <span className="text-xs text-muted-foreground">
+            всего сделок в базе: {formatNumber(leadsSummary?.total.deals ?? 0)}
+          </span>
         </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-xs text-muted-foreground">По</label>
-          <input
-            type="date"
-            value={rangeTo}
-            onChange={(e) => setRangeTo(e.target.value)}
-            className="text-sm px-3 py-1.5 rounded-lg border border-border bg-background"
-          />
+        <p className="text-xs text-muted-foreground mb-4">Созданные за период (все воронки) · быстрый обзор</p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          {LEAD_PRESETS.map((p) => {
+            const b = leadsSummary?.presets[p.key];
+            return (
+              <div key={p.key} className="rounded-lg border border-border p-3 text-center">
+                <div className="text-2xl font-bold tabular-nums">
+                  {b ? formatNumber(b.deals) : '…'}
+                </div>
+                <div className="text-xs text-muted-foreground mt-0.5">{p.label}</div>
+              </div>
+            );
+          })}
         </div>
-        <button
-          onClick={() => rangeFrom && rangeTo && setAppliedRange({ from: rangeFrom, to: rangeTo })}
-          disabled={!rangeFrom || !rangeTo}
-          className="text-sm px-4 py-1.5 rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40"
-        >
-          Применить
-        </button>
-        {appliedRange && (
-          <button
-            onClick={() => { setAppliedRange(null); setRangeFrom(''); setRangeTo(''); }}
-            className="text-sm px-3 py-1.5 rounded-lg border border-border hover:bg-muted"
-          >
-            Сбросить
-          </button>
-        )}
-        <span className="text-xs text-muted-foreground ml-auto">
-          {appliedRange
-            ? `Период: ${appliedRange.from} → ${appliedRange.to}`
-            : 'Сделки: «новых» считаются за последние 28 дней'}
-        </span>
       </section>
 
-      {/* Блок 1: Лиды (новые crm.lead) по периодам */}
-      <section className="border border-border rounded-xl bg-background p-5">
-        <div className="flex items-baseline justify-between mb-4">
-          <h2 className="font-semibold">Лиды (новые)</h2>
-          <span className="text-xs text-muted-foreground">всего в базе: {formatNumber(leadsSummary?.total ?? 0)}</span>
+      {/* Фильтр периода — управляет блоком «Сделки по воронкам» и показателями ниже */}
+      <section className="border border-border rounded-xl bg-background p-4 space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium mr-1">Период:</span>
+          {QUICK_PRESETS.map((q) => {
+            const active = !customMode && filterDays === q.days;
+            return (
+              <button
+                key={q.days}
+                onClick={() => { setCustomMode(false); setFilterDays(q.days); }}
+                className={`text-sm px-3 py-1.5 rounded-lg border transition-colors ${active ? 'bg-primary text-primary-foreground border-primary' : 'border-border hover:bg-muted'}`}
+              >
+                {q.label}
+              </button>
+            );
+          })}
+          <button
+            onClick={() => setCustomMode(true)}
+            className={`text-sm px-3 py-1.5 rounded-lg border transition-colors ${customMode ? 'bg-primary text-primary-foreground border-primary' : 'border-border hover:bg-muted'}`}
+          >
+            Свой период
+          </button>
+          {(customMode || filterDays !== 90) && (
+            <button
+              onClick={() => { setCustomMode(false); setFilterDays(90); setCustomFrom(''); setCustomTo(''); }}
+              className="text-sm px-3 py-1.5 rounded-lg border border-border hover:bg-muted text-muted-foreground ml-auto"
+            >
+              Сбросить
+            </button>
+          )}
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          {LEAD_PRESETS.map((p) => (
-            <div key={p.key} className="rounded-lg border border-border p-3 text-center">
-              <div className="text-2xl font-bold tabular-nums">
-                {leadsSummary ? formatNumber(leadsSummary.presets[p.key] ?? 0) : '…'}
-              </div>
-              <div className="text-xs text-muted-foreground mt-0.5">{p.label}</div>
+        {customMode && (
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-muted-foreground">С</label>
+              <input
+                type="date"
+                value={customFrom}
+                onChange={(e) => setCustomFrom(e.target.value)}
+                className="text-sm px-3 py-1.5 rounded-lg border border-border bg-background"
+              />
             </div>
-          ))}
-        </div>
-        {leadsSummary?.custom && (
-          <div className="mt-3 rounded-lg bg-primary/10 text-primary p-3 text-sm">
-            За выбранный период ({leadsSummary.custom.from} → {leadsSummary.custom.to}):{' '}
-            <strong>{formatNumber(leadsSummary.custom.count)}</strong> новых лидов
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-muted-foreground">По</label>
+              <input
+                type="date"
+                value={customTo}
+                onChange={(e) => setCustomTo(e.target.value)}
+                className="text-sm px-3 py-1.5 rounded-lg border border-border bg-background"
+              />
+            </div>
           </div>
         )}
+        <p className="text-xs text-muted-foreground">
+          Применяется к блокам ниже («Сделки по воронкам» и показатели) · {effective.from} → {effective.to}
+        </p>
       </section>
 
       {/* Блок 2: Сделки — 6 воронок продаж, каждая отдельно + drill-down */}
       <section>
-        <h2 className="text-lg font-semibold mb-3">Сделки по воронкам</h2>
+        <h2 className="text-lg font-semibold mb-3">Сделки по воронкам · {periodLabel}</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {(salesFunnels?.funnels ?? []).map((fn) => (
             <div key={fn.categoryId} className="border border-border rounded-xl bg-background overflow-hidden">

@@ -148,9 +148,11 @@ export class YandexMetricaService {
       const res = await fetch(url.toString(), { headers: { Authorization: `OAuth ${token}` } });
       if (!res.ok) continue;
 
-      const data = (await res.json()) as { data?: Array<{ dimensions: Array<{ id: string }>; metrics: number[] }> };
+      const data = (await res.json()) as { data?: Array<{ dimensions: Array<{ id?: string; name?: string }>; metrics: number[] }> };
       for (const row of data.data ?? []) {
-        const date = row.dimensions?.[0]?.id ?? '';
+        // У измерения ym:s:date дата лежит в name (id обычно пустой)
+        const date = row.dimensions?.[0]?.name || row.dimensions?.[0]?.id || '';
+        if (!date) continue;
         const visits = Math.round(row.metrics?.[0] ?? 0);
         byDate.set(date, (byDate.get(date) ?? 0) + visits);
       }

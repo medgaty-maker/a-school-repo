@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import {
   Megaphone, ExternalLink, AlertTriangle, TrendingUp, DollarSign,
   MousePointerClick, Target, BarChart3, ChevronRight, RefreshCw,
-  Eye, Users, Zap, Phone, MessageCircle, FileText, Share2, ChevronDown,
+  Eye, Users, Zap, Phone, MessageCircle, FileText, Share2, ChevronDown, Info,
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
 import { apiFetch } from '@/lib/api-client';
@@ -220,9 +220,9 @@ export default function AdsPage() {
                   <th className="text-left p-3">Статус</th>
                   <th className="text-right p-3">Расход</th>
                   <th className="text-right p-3">Охват</th>
-                  <th className="text-right p-3"><span title="Кликабельность — клики / показы × 100%">CTR ⓘ</span></th>
-                  <th className="text-right p-3"><span title="Стоимость лида — расход ÷ лиды">CPL ⓘ</span></th>
-                  <th className="text-right p-3"><span title="Возврат на рекламные расходы — доход ÷ расход">ROAS ⓘ</span></th>
+                  <th className="text-right p-3"><span className="inline-flex items-center gap-1 justify-end">CTR <InfoBadge text="Кликабельность — клики / показы × 100%" /></span></th>
+                  <th className="text-right p-3"><span className="inline-flex items-center gap-1 justify-end">CPL <InfoBadge text="Стоимость лида — расход ÷ лиды" /></span></th>
+                  <th className="text-right p-3"><span className="inline-flex items-center gap-1 justify-end">ROAS <InfoBadge text="Возврат на рекламные расходы — доход ÷ расход" /></span></th>
                   <th className="p-3 w-8" />
                 </tr>
               </thead>
@@ -268,6 +268,30 @@ export default function AdsPage() {
   );
 }
 
+// Кликабельная инфо-иконка с пояснением метрики (работает и на тач — не только hover)
+function InfoBadge({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="relative inline-flex">
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+        onBlur={() => setTimeout(() => setOpen(false), 100)}
+        title={text}
+        aria-label={text}
+        className="text-primary hover:text-primary/80 transition-colors cursor-pointer inline-flex"
+      >
+        <Info className="size-3.5" />
+      </button>
+      {open && (
+        <span className="absolute z-30 left-1/2 -translate-x-1/2 top-6 w-56 rounded-lg border border-border bg-background p-2.5 text-xs font-normal normal-case text-foreground shadow-lg">
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function KpiCard({
   icon, label, value, hint, loading, small, tooltip,
 }: {
@@ -278,7 +302,7 @@ function KpiCard({
       <div className="flex items-center gap-1.5 text-muted-foreground mb-2 text-xs">
         {icon}
         <span>{label}</span>
-        {tooltip && <span title={tooltip} className="cursor-help text-muted-foreground/40 hover:text-muted-foreground transition-colors">ⓘ</span>}
+        {tooltip && <InfoBadge text={tooltip} />}
       </div>
       <div className={`font-bold tabular-nums ${small ? 'text-xl' : 'text-2xl'} ${loading ? 'opacity-50' : ''}`}>{value}</div>
       {hint && <div className="text-xs text-muted-foreground mt-1">{hint}</div>}

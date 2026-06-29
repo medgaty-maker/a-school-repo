@@ -290,7 +290,7 @@ export class BitrixService {
 
     const deals = await this.prisma.bitrixDeal.findMany({
       where: this.dealWhere(since, categoryIds),
-      select: { stageId: true, stageName: true, isWon: true, isLost: true, opportunity: true },
+      select: { stageId: true, stageName: true, categoryId: true, isWon: true, isLost: true, opportunity: true },
     });
 
     const stageMap = new Map<string, { count: number; amount: number; stageName: string; isWon: boolean; isLost: boolean }>();
@@ -314,10 +314,11 @@ export class BitrixService {
     }));
 
     const total = deals.length;
-    const won = deals.filter((d) => d.isWon).length;
+    const isSale = (d: (typeof deals)[number]) => this.isSaleDeal(d.stageId, d.categoryId, d.isWon);
+    const won = deals.filter(isSale).length;
     const lost = deals.filter((d) => d.isLost).length;
     const inProgress = total - won - lost;
-    const totalAmount = deals.filter((d) => d.isWon).reduce((s, d) => s + Number(d.opportunity ?? 0), 0);
+    const totalAmount = deals.filter(isSale).reduce((s, d) => s + Number(d.opportunity ?? 0), 0);
 
     return {
       stages,
@@ -588,6 +589,28 @@ export class BitrixService {
     return { total, stages };
   }
 
+  // «Продажа» = достигнута стадия оплаты/договора/закрытия (по требованию бизнеса),
+  // а не только финальный STAGE_SEMANTIC_ID='S'. Точные STAGE_ID по воронкам:
+  private static readonly SALE_STAGE_IDS = new Set<string>([
+    // Резерв (28): Успешно реализованно
+    'C28:WON',
+    // 1.Продажа (48): Договор подписан, Вступительный взнос оплачен, Успешно реализовано
+    'C48:UC_CONTRACT_DONE', 'C48:UC_FEE_PAID', 'C48:WON',
+    // 2026-2027 Набор в 1 класс (52): Договор подписан, Сделка успешна, Вступительный взнос оплачен
+    'C52:UC_CONTRACT_DONE', 'C52:WON', 'C52:UC_FEE_PAID',
+    // Лагерь — Сделки (58): Сбор документов, Сбор документов 2 смена, Кейс закрыт
+    'C58:UC_12_DOCS', 'C58:UC_NMUE86', 'C58:WON',
+  ]);
+  // Воронки с явным маппингом продаж. Для них «продажа» = только стадии из набора выше.
+  // Для остальных воронок «продажа» = STAGE_SEMANTIC_ID='S' (isWon), как раньше.
+  private static readonly SALE_MAPPED_CATEGORIES = new Set<string>(['28', '48', '52', '58']);
+
+  private isSaleDeal(stageId: string, categoryId: string | null, isWon: boolean): boolean {
+    if (BitrixService.SALE_STAGE_IDS.has(stageId)) return true;
+    if (categoryId && BitrixService.SALE_MAPPED_CATEGORIES.has(categoryId)) return false;
+    return isWon;
+  }
+
   // Фильтр по воронкам. Если categoryIds задан (проект) — по ним; иначе глобально
   // по названиям воронок продаж (Резерв, продажа, набор в 1 класс) с фолбэком на все.
   async getPipelineFunnel(daysBack = 90, categoryIds?: string[]) {
@@ -596,7 +619,7 @@ export class BitrixService {
 
     const allDeals = await this.prisma.bitrixDeal.findMany({
       where: this.dealWhere(since, categoryIds),
-      select: { isWon: true, isLost: true, categoryId: true, categoryName: true, opportunity: true },
+      select: { stageId: true, isWon: true, isLost: true, categoryId: true, categoryName: true, opportunity: true },
     });
 
     let deals = allDeals;
@@ -610,20 +633,21 @@ export class BitrixService {
       isFiltered = filtered.length > 0;
     }
 
-    const won = deals.filter((d) => d.isWon).length;
+    const isSale = (d: (typeof deals)[number]) => this.isSaleDeal(d.stageId, d.categoryId, d.isWon);
+    const won = deals.filter(isSale).length;
     const lost = deals.filter((d) => d.isLost).length;
     const inProgress = deals.length - won - lost;
-    const totalAmount = deals.filter((d) => d.isWon).reduce((s, d) => s + Number(d.opportunity ?? 0), 0);
+    const totalAmount = deals.filter(isSale).reduce((s, d) => s + Number(d.opportunity ?? 0), 0);
 
-    // Breakdown by pipeline
-    const byPipeline = new Map<string, { won: number; inProgress: number; total: number }>();
+    // Breakdown by pipeline — ключ по categoryId (имя воронки бывает пустым)
+    const byPipeline = new Map<string, { categoryId: string; name: string; won: number; inProgress: number; total: number }>();
     for (const d of deals) {
-      const key = d.categoryName ?? `pipeline_${d.categoryId ?? '0'}`;
-      const cur = byPipeline.get(key) ?? { won: 0, inProgress: 0, total: 0 };
+      const cid = d.categoryId ?? '0';
+      const cur = byPipeline.get(cid) ?? { categoryId: cid, name: d.categoryName ?? `Воронка ${cid}`, won: 0, inProgress: 0, total: 0 };
       cur.total++;
-      if (d.isWon) cur.won++;
+      if (isSale(d)) cur.won++;
       else if (!d.isLost) cur.inProgress++;
-      byPipeline.set(key, cur);
+      byPipeline.set(cid, cur);
     }
 
     return {
@@ -632,28 +656,40 @@ export class BitrixService {
       lost,
       totalAmount: Math.round(totalAmount),
       total: deals.length,
-      pipelines: [...byPipeline.entries()].map(([name, v]) => ({ name, ...v })).sort((a, b) => b.total - a.total),
+      pipelines: [...byPipeline.values()].sort((a, b) => b.total - a.total),
       isFiltered,
     };
   }
 
-  // === Блок «Лиды»: количество лидов (crm.lead), СОЗДАННЫХ за период ===
+  // === Блок «Лиды»: входящие = лиды (crm.lead) + новые сделки (crm.deal), СОЗДАННЫЕ за период ===
+  // Бизнес заводит часть обращений сразу сделками, минуя лиды, поэтому считаем оба источника.
   async getLeadsSummary(from?: string, to?: string) {
     const now = Date.now();
     const presetDays = [7, 14, 28, 31, 90, 180];
-    const presets: Record<string, number> = {};
+    const presets: Record<string, { leads: number; deals: number; total: number }> = {};
     for (const d of presetDays) {
       const since = new Date(now - d * 86_400_000);
-      presets[`${d}d`] = await this.prisma.bitrixLead.count({ where: { dateCreate: { gte: since } } });
+      const [leads, deals] = await Promise.all([
+        this.prisma.bitrixLead.count({ where: { dateCreate: { gte: since } } }),
+        this.prisma.bitrixDeal.count({ where: { dateCreate: { gte: since } } }),
+      ]);
+      presets[`${d}d`] = { leads, deals, total: leads + deals };
     }
-    const total = await this.prisma.bitrixLead.count();
+    const [leadsTotal, dealsTotal] = await Promise.all([
+      this.prisma.bitrixLead.count(),
+      this.prisma.bitrixDeal.count(),
+    ]);
+    const total = { leads: leadsTotal, deals: dealsTotal, total: leadsTotal + dealsTotal };
 
-    let custom: { from: string; to: string; count: number } | null = null;
+    let custom: { from: string; to: string; leads: number; deals: number; total: number } | null = null;
     if (from && to) {
       const f = new Date(from);
       const t = new Date(`${to}T23:59:59`);
-      const count = await this.prisma.bitrixLead.count({ where: { dateCreate: { gte: f, lte: t } } });
-      custom = { from, to, count };
+      const [leads, deals] = await Promise.all([
+        this.prisma.bitrixLead.count({ where: { dateCreate: { gte: f, lte: t } } }),
+        this.prisma.bitrixDeal.count({ where: { dateCreate: { gte: f, lte: t } } }),
+      ]);
+      custom = { from, to, leads, deals, total: leads + deals };
     }
 
     return { presets, custom, total };

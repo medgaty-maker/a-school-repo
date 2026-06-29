@@ -41,7 +41,7 @@ const METRICS_BY_PLATFORM: Record<string, Array<{ key: string; label: string; hi
   ],
   INSTAGRAM: [
     { key: 'followers_count', label: 'Подписчики' },
-    { key: 'views_28d', label: 'Просмотры (28д)', hint: 'органика — без рекламного трафика' },
+    { key: 'views_28d', label: 'Просмотры (28д)', hint: 'всего просмотров контента по аккаунту за 28 дней (Reels, посты, истории)' },
     { key: 'impressions_28d', label: 'Вовлечённость (28д)', hint: 'аккаунтов взаимодействовали' },
     { key: 'reach_28d', label: 'Охват (28д)' },
     { key: 'profile_visits_28d', label: 'Посещения профиля' },
