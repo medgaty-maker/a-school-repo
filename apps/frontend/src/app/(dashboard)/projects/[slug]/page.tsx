@@ -18,7 +18,7 @@ import { WeekdayHeatmap } from '@/components/widgets/weekday-heatmap';
 import { CountriesList } from '@/components/widgets/countries-list';
 import { VideoDetailSheet } from '@/components/widgets/video-detail-sheet';
 import { formatNumber } from '@/lib/utils';
-import { usePeriod, PERIODS } from '@/lib/use-period';
+import { usePeriod, PERIODS, periodToDatePreset } from '@/lib/use-period';
 
 type ProjectMetrics = {
   project: {
@@ -235,8 +235,9 @@ function ProjectDetailContent() {
   const [kpiLoading, setKpiLoading] = useState(true);
   const [salesOpen, setSalesOpen] = useState(false);
 
-  const { period } = usePeriod();
+  const { period, days: periodDays } = usePeriod();
   const periodLabel = PERIODS.find((p) => p.value === period)?.label ?? period;
+  const datePreset = periodToDatePreset(period);
 
   useEffect(() => {
     const token = readCookie('access_token');
@@ -271,11 +272,11 @@ function ProjectDetailContent() {
     // KPI data: leads + Bitrix pipeline + Meta daily chart + Yandex daily
     setKpiLoading(true);
     Promise.all([
-      apiFetch<AdInsights>(`/integrations/meta/ads/insights?datePreset=last_28d&project=${slug}`, { token }).catch(() => null),
-      apiFetch<LeadBreakdown>(`/integrations/yandex-metrica/leads?datePreset=last_28d&project=${slug}`, { token }).catch(() => null),
-      apiFetch<PipelineFunnel>(`/bitrix/pipeline-funnel?days=30&project=${slug}`, { token }).catch(() => null),
-      apiFetch<MetaDaily>(`/integrations/meta/ads/insights-daily?datePreset=last_28d&project=${slug}`, { token }).catch(() => null),
-      apiFetch<YandexDaily>(`/integrations/yandex-metrica/visits-daily?datePreset=last_28d&project=${slug}`, { token }).catch(() => null),
+      apiFetch<AdInsights>(`/integrations/meta/ads/insights?datePreset=${datePreset}&project=${slug}`, { token }).catch(() => null),
+      apiFetch<LeadBreakdown>(`/integrations/yandex-metrica/leads?datePreset=${datePreset}&project=${slug}`, { token }).catch(() => null),
+      apiFetch<PipelineFunnel>(`/bitrix/pipeline-funnel?days=${periodDays}&project=${slug}`, { token }).catch(() => null),
+      apiFetch<MetaDaily>(`/integrations/meta/ads/insights-daily?datePreset=${datePreset}&project=${slug}`, { token }).catch(() => null),
+      apiFetch<YandexDaily>(`/integrations/yandex-metrica/visits-daily?datePreset=${datePreset}&project=${slug}`, { token }).catch(() => null),
     ]).then(([meta, metrica, bitrix, metaDailyData, yandexDailyData]) => {
       if (meta) setMetaInsights(meta);
       setMetaLeads(meta?.leads ?? 0);
@@ -382,7 +383,7 @@ function ProjectDetailContent() {
             label="Сделки"
             value={bitrixActive || null}
             icon={<BookOpen className="size-4" />}
-            hint="Bitrix24 · в работе, 30 дней"
+            hint={`Bitrix24 · в работе, ${periodLabel.toLowerCase()}`}
             pendingNote="Подключите Bitrix24"
           />
           <div className="relative">
@@ -396,7 +397,7 @@ function ProjectDetailContent() {
                 label="Продажи"
                 value={bitrixWon || null}
                 icon={<ChevronDown className={`size-4 text-primary transition-transform ${salesOpen ? 'rotate-180' : ''}`} />}
-                hint="Bitrix24 · 30 дней · нажмите для разбивки"
+                hint={`Bitrix24 · ${periodLabel.toLowerCase()} · нажмите для разбивки`}
                 pendingNote="Подключите Bitrix24"
               />
             </button>
@@ -441,7 +442,7 @@ function ProjectDetailContent() {
           <PlatformCard platform="YOUTUBE" data={data.platforms.YOUTUBE as any} />
           <PlatformCard platform="INSTAGRAM" data={data.platforms.INSTAGRAM as any} />
           <MetaAdsCard insights={metaInsights} kztRate={metaInsights?.kztRate ?? 460} loading={kpiLoading} />
-          <BitrixCard funnel={bitrixFunnel} loading={kpiLoading} />
+          <BitrixCard funnel={bitrixFunnel} loading={kpiLoading} periodLabel={periodLabel} />
         </div>
       </section>
 
@@ -717,7 +718,7 @@ function MetaAdsCard({ insights, kztRate, loading }: { insights: AdInsights | nu
   );
 }
 
-function BitrixCard({ funnel, loading }: { funnel: PipelineFunnel | null; loading?: boolean }) {
+function BitrixCard({ funnel, loading, periodLabel }: { funnel: PipelineFunnel | null; loading?: boolean; periodLabel: string }) {
   const hasData = !!funnel && funnel.total > 0;
   const conv = funnel && funnel.total > 0 ? `${Math.round((funnel.won / funnel.total) * 1000) / 10}%` : '—';
   const metrics = funnel
@@ -746,7 +747,7 @@ function BitrixCard({ funnel, loading }: { funnel: PipelineFunnel | null; loadin
           <span className="text-xs text-muted-foreground">нет данных</span>
         )}
       </div>
-      <div className="text-sm text-muted-foreground">Сделки по воронкам проекта · 90 дней</div>
+      <div className="text-sm text-muted-foreground">Сделки по воронкам проекта · {periodLabel.toLowerCase()}</div>
       {loading ? (
         <div className="text-xs text-muted-foreground py-3 animate-pulse">Загрузка…</div>
       ) : !hasData ? (

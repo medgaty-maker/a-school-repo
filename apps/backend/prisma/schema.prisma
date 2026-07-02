@@ -234,10 +234,14 @@ model BitrixDeal {
   dateCreate   DateTime
   dateModify   DateTime
   closeDate    DateTime?
+  // Дата первого перехода в «продажную» стадию (crm.stagehistory).
+  // «Продажи за период» считаются по ней, а не по дате создания сделки.
+  saleAt       DateTime?
   syncedAt     DateTime @default(now())
 
   @@index([stageId])
   @@index([dateCreate])
+  @@index([saleAt])
   @@index([utmSource, utmCampaign])
   @@index([isWon, isLost])
 }

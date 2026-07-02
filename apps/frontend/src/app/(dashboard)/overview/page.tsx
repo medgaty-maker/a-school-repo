@@ -12,7 +12,7 @@ import { WeekdayHeatmap } from '@/components/widgets/weekday-heatmap';
 import { DailyViewsChart } from '@/components/widgets/daily-views-chart';
 import { InsightsBlock } from '@/components/widgets/insights';
 import { apiFetch } from '@/lib/api-client';
-import { usePeriod, PERIODS } from '@/lib/use-period';
+import { usePeriod, PERIODS, periodToDatePreset } from '@/lib/use-period';
 import { formatNumber } from '@/lib/utils';
 
 type ProjectWithPlatforms = {
@@ -132,7 +132,7 @@ function OverviewContent() {
           <KpiCard
             label="Просмотры видео (28 дней)"
             value={youtubeViews}
-            hint={youtubeSubs ? `${youtubeSubs.toLocaleString('ru-RU')} подписчиков` : 'YouTube подключён? Проверьте в «Настройках»'}
+            hint={youtubeSubs ? `${youtubeSubs.toLocaleString('ru-RU')} подписчиков · скользящие 28 дней, не зависит от выбранного периода` : 'YouTube подключён? Проверьте в «Настройках»'}
             icon={<Play className="size-4" />}
             status={youtubeViews > 0 ? 'good' : 'neutral'}
           />
@@ -317,18 +317,7 @@ function OverviewContent() {
   );
 }
 
-// Период дашборда → Meta Ads datePreset (ближайшее допустимое значение Meta)
-function periodToDatePreset(period: string): string {
-  switch (period) {
-    case 'today': return 'today';
-    case 'yesterday': return 'yesterday';
-    case '7d': return 'last_7d';
-    case '30d': return 'last_30d';
-    case 'quarter': return 'last_90d';
-    case 'year': return 'this_year';
-    default: return 'last_30d';
-  }
-}
+// periodToDatePreset перенесён в @/lib/use-period (переиспользуется на страницах проекта и рекламы)
 
 function readCookie(name: string): string | null {
   if (typeof document === 'undefined') return null;

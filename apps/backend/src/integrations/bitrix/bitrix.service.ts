@@ -223,6 +223,14 @@ export class BitrixService {
         this.logger.warn(`Bitrix leads sync failed: ${(e as Error).message}`);
       }
 
+      // Даты первого перехода в «продажную» стадию — для честного «продажи за период»
+      let salesDated = 0;
+      try {
+        salesDated = await this.syncSaleDates(webhookUrl);
+      } catch (e) {
+        this.logger.warn(`Bitrix stage-history sync failed: ${(e as Error).message}`);
+      }
+
       await this.prisma.bitrixConfig.updateMany({ data: { lastSyncAt: new Date() } });
 
       await this.prisma.integrationLog.create({
@@ -234,7 +242,7 @@ export class BitrixService {
         },
       });
 
-      this.logger.log(`Bitrix24 sync complete: ${synced} deals, ${leadsSynced} leads, ${errors} errors`);
+      this.logger.log(`Bitrix24 sync complete: ${synced} deals, ${leadsSynced} leads, ${salesDated} sale dates, ${errors} errors`);
     } catch (e) {
       await this.prisma.integrationLog.create({
         data: {
@@ -315,10 +323,23 @@ export class BitrixService {
 
     const total = deals.length;
     const isSale = (d: (typeof deals)[number]) => this.isSaleDeal(d.stageId, d.categoryId, d.isWon);
-    const won = deals.filter(isSale).length;
+
+    // «Успешных» — продажи, СЛУЧИВШИЕСЯ за период (по дате перехода в стадию),
+    // независимо от даты создания сделки.
+    const saleCandidates = await this.prisma.bitrixDeal.findMany({
+      where: {
+        ...(categoryIds ? { categoryId: { in: categoryIds } } : {}),
+        OR: [{ stageId: { in: [...BitrixService.SALE_STAGE_IDS] } }, { isWon: true }],
+      },
+      select: { stageId: true, categoryId: true, isWon: true, opportunity: true, saleAt: true, closeDate: true, dateCreate: true },
+    });
+    const salesInPeriod = saleCandidates
+      .filter((d) => this.isSaleDeal(d.stageId, d.categoryId, d.isWon))
+      .filter((d) => (d.saleAt ?? d.closeDate ?? d.dateCreate) >= since);
+    const won = salesInPeriod.length;
     const lost = deals.filter((d) => d.isLost).length;
-    const inProgress = total - won - lost;
-    const totalAmount = deals.filter(isSale).reduce((s, d) => s + Number(d.opportunity ?? 0), 0);
+    const inProgress = deals.filter((d) => !isSale(d) && !d.isLost).length;
+    const totalAmount = salesInPeriod.reduce((s, d) => s + Number(d.opportunity ?? 0), 0);
 
     return {
       stages,
@@ -339,7 +360,7 @@ export class BitrixService {
 
     const deals = await this.prisma.bitrixDeal.findMany({
       where: this.dealWhere(since, categoryIds),
-      select: { utmSource: true, utmCampaign: true, utmMedium: true, isWon: true, opportunity: true },
+      select: { utmSource: true, utmCampaign: true, utmMedium: true, stageId: true, categoryId: true, isWon: true, opportunity: true },
     });
 
     const sourceMap = new Map<string, { count: number; won: number; amount: number }>();
@@ -347,9 +368,26 @@ export class BitrixService {
     for (const d of deals) {
       const src = d.utmSource ?? 'organic';
       if (!sourceMap.has(src)) sourceMap.set(src, { count: 0, won: 0, amount: 0 });
+      sourceMap.get(src)!.count++;
+    }
+
+    // «Закрыто» — продажи, СЛУЧИВШИЕСЯ за период (по дате перехода в стадию),
+    // как в getFunnel: иначе таблица расходится с KPI «Успешных».
+    const saleCandidates = await this.prisma.bitrixDeal.findMany({
+      where: {
+        ...(categoryIds ? { categoryId: { in: categoryIds } } : {}),
+        OR: [{ stageId: { in: [...BitrixService.SALE_STAGE_IDS] } }, { isWon: true }],
+      },
+      select: { utmSource: true, stageId: true, categoryId: true, isWon: true, opportunity: true, saleAt: true, closeDate: true, dateCreate: true },
+    });
+    for (const d of saleCandidates) {
+      if (!this.isSaleDeal(d.stageId, d.categoryId, d.isWon)) continue;
+      if ((d.saleAt ?? d.closeDate ?? d.dateCreate) < since) continue;
+      const src = d.utmSource ?? 'organic';
+      if (!sourceMap.has(src)) sourceMap.set(src, { count: 0, won: 0, amount: 0 });
       const e = sourceMap.get(src)!;
-      e.count++;
-      if (d.isWon) { e.won++; e.amount += Number(d.opportunity ?? 0); }
+      e.won++;
+      e.amount += Number(d.opportunity ?? 0);
     }
 
     return Array.from(sourceMap.entries())
@@ -474,6 +512,53 @@ export class BitrixService {
       await this.sleep(300);
     }
     return leads;
+  }
+
+  // Выгружает из crm.stagehistory даты первого попадания сделок в «продажные» стадии
+  // и проставляет BitrixDeal.saleAt. Возвращает число обновлённых сделок.
+  private async syncSaleDates(webhookUrl: string): Promise<number> {
+    const saleStages = [...BitrixService.SALE_STAGE_IDS];
+    // 1) Вся история переходов в продажные стадии (ID-пагинация, start=-1)
+    const firstSale = new Map<number, Date>(); // dealId -> самый ранний переход
+    let lastId = 0;
+    while (true) {
+      const res = await this.bitrixPost(`${webhookUrl}crm.stagehistory.list.json`, {
+        entityTypeId: 2, // deal
+        order: { ID: 'ASC' },
+        filter: { STAGE_ID: saleStages, '>ID': lastId },
+        select: ['ID', 'OWNER_ID', 'STAGE_ID', 'CREATED_TIME'],
+        start: -1,
+      });
+      if (!res.ok) throw new Error(`Bitrix API error: ${res.status}`);
+      const data = (await res.json()) as {
+        result?: { items?: Array<{ ID: number; OWNER_ID: number; CREATED_TIME: string }> } | Array<{ ID: number; OWNER_ID: number; CREATED_TIME: string }>;
+      };
+      const items = Array.isArray(data.result) ? data.result : (data.result?.items ?? []);
+      for (const it of items) {
+        const when = new Date(it.CREATED_TIME);
+        const cur = firstSale.get(it.OWNER_ID);
+        if (!cur || when < cur) firstSale.set(it.OWNER_ID, when);
+      }
+      if (items.length < 50) break;
+      lastId = Number(items[items.length - 1].ID);
+      await this.sleep(300);
+    }
+
+    // 2) Для «непродажных» воронок (isWon без явного маппинга) продажа = closeDate/dateCreate,
+    //    saleAt не трогаем. Обновляем только отличающиеся значения.
+    const existing = await this.prisma.bitrixDeal.findMany({
+      where: { bitrixId: { in: [...firstSale.keys()] } },
+      select: { bitrixId: true, saleAt: true },
+    });
+    let updated = 0;
+    for (const d of existing) {
+      const want = firstSale.get(d.bitrixId)!;
+      if (!d.saleAt || Math.abs(d.saleAt.getTime() - want.getTime()) > 1000) {
+        await this.prisma.bitrixDeal.update({ where: { bitrixId: d.bitrixId }, data: { saleAt: want } });
+        updated++;
+      }
+    }
+    return updated;
   }
 
   async getStagesBreakdown(daysBack: number, categoryIds?: string[]) {
@@ -635,20 +720,44 @@ export class BitrixService {
       isFiltered = filtered.length > 0;
     }
 
-    const isSale = (d: (typeof deals)[number]) => this.isSaleDeal(d.stageId, d.categoryId, d.isWon);
-    const won = deals.filter(isSale).length;
-    const lost = deals.filter((d) => d.isLost).length;
-    const inProgress = deals.length - won - lost;
-    const totalAmount = deals.filter(isSale).reduce((s, d) => s + Number(d.opportunity ?? 0), 0);
+    // «Продажи за период» — по дате ПЕРЕХОДА в продажную стадию (saleAt из stagehistory),
+    // а не по дате создания сделки: старая сделка, закрытая вчера, должна дать +1.
+    const saleCandidates = await this.prisma.bitrixDeal.findMany({
+      where: {
+        ...(categoryIds ? { categoryId: { in: categoryIds } } : {}),
+        OR: [{ stageId: { in: [...BitrixService.SALE_STAGE_IDS] } }, { isWon: true }],
+      },
+      select: { stageId: true, categoryId: true, categoryName: true, isWon: true, opportunity: true, saleAt: true, closeDate: true, dateCreate: true },
+    });
+    let sales = saleCandidates.filter((d) => this.isSaleDeal(d.stageId, d.categoryId, d.isWon));
+    if (categoryIds === undefined && isFiltered) {
+      sales = sales.filter((d) => SALES_PIPELINES.some((p) => (d.categoryName ?? '').toLowerCase().includes(p)));
+    }
+    // дата продажи: переход в стадию → фолбэк closeDate → дата создания
+    const saleDate = (d: (typeof sales)[number]) => d.saleAt ?? d.closeDate ?? d.dateCreate;
+    const salesInPeriod = sales.filter((d) => saleDate(d) >= since);
+    const won = salesInPeriod.length;
+    const totalAmount = salesInPeriod.reduce((s, d) => s + Number(d.opportunity ?? 0), 0);
 
-    // Breakdown by pipeline — ключ по categoryId (имя воронки бывает пустым)
+    const isSale = (d: { stageId: string; categoryId: string | null; isWon: boolean }) =>
+      this.isSaleDeal(d.stageId, d.categoryId, d.isWon);
+    const lost = deals.filter((d) => d.isLost).length;
+    const inProgress = deals.filter((d) => !isSale(d) && !d.isLost).length;
+
+    // Breakdown by pipeline — ключ по categoryId (имя воронки бывает пустым).
+    // total/inProgress — по созданным за период; won — по продажам за период (saleAt).
     const byPipeline = new Map<string, { categoryId: string; name: string; won: number; inProgress: number; total: number }>();
     for (const d of deals) {
       const cid = d.categoryId ?? '0';
       const cur = byPipeline.get(cid) ?? { categoryId: cid, name: d.categoryName ?? `Воронка ${cid}`, won: 0, inProgress: 0, total: 0 };
       cur.total++;
-      if (isSale(d)) cur.won++;
-      else if (!d.isLost) cur.inProgress++;
+      if (!isSale(d) && !d.isLost) cur.inProgress++;
+      byPipeline.set(cid, cur);
+    }
+    for (const d of salesInPeriod) {
+      const cid = d.categoryId ?? '0';
+      const cur = byPipeline.get(cid) ?? { categoryId: cid, name: d.categoryName ?? `Воронка ${cid}`, won: 0, inProgress: 0, total: 0 };
+      cur.won++;
       byPipeline.set(cid, cur);
     }
 

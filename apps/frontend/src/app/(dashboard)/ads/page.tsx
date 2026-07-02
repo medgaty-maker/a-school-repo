@@ -77,7 +77,16 @@ export default function AdsPage() {
   const [status, setStatus] = useState<MetaStatus | null>(null);
   const [insights, setInsights] = useState<AdInsights | null>(null);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [datePreset, setDatePreset] = useState('last_28d');
+  // Стартовый период — из глобального ?period= (ближайший доступный пресет), дальше локальные кнопки
+  const [datePreset, setDatePreset] = useState(() => {
+    if (typeof window === 'undefined') return 'last_28d';
+    const p = new URLSearchParams(window.location.search).get('period');
+    const map: Record<string, string> = {
+      today: 'last_7d', yesterday: 'last_7d', '7d': 'last_7d',
+      '30d': 'last_30d', quarter: 'last_90d', year: 'last_90d',
+    };
+    return (p && map[p]) || 'last_28d';
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [leads, setLeads] = useState<LeadBreakdown | null>(null);

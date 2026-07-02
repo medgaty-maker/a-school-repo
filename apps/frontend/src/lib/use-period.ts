@@ -16,6 +16,20 @@ export type Period = (typeof PERIODS)[number]['value'];
 
 const DEFAULT: Period = '30d';
 
+// Глобальный период → datePreset для Meta Ads / Яндекс.Метрики
+// (бэкенд Метрики понимает те же значения через resolveDates).
+export function periodToDatePreset(period: string): string {
+  switch (period) {
+    case 'today': return 'today';
+    case 'yesterday': return 'yesterday';
+    case '7d': return 'last_7d';
+    case '30d': return 'last_30d';
+    case 'quarter': return 'last_90d';
+    case 'year': return 'this_year';
+    default: return 'last_30d';
+  }
+}
+
 /**
  * URL-синхронизированный период (ТЗ §5.2).
  * Сохраняется в ?period=, чтобы пользователь мог делиться ссылкой.

@@ -7,6 +7,7 @@ import { apiFetch } from '@/lib/api-client';
 import { KpiCard } from '@/components/kpi-card';
 import { DonutChart } from '@/components/widgets/donut-chart';
 import { formatNumber } from '@/lib/utils';
+import { usePeriod } from '@/lib/use-period';
 import {
   BarChart,
   Bar,
@@ -131,8 +132,14 @@ function LeadsContent() {
   const [openFunnel, setOpenFunnel] = useState<string | null>(null);
 
   // Фильтр периода для детальных блоков: быстрые пресеты по дням или свой диапазон.
-  // По умолчанию 90 дней — чтобы совпадало с карточкой «Продажи» на странице проекта.
-  const [filterDays, setFilterDays] = useState(90);
+  // Стартует от глобального ?period= (ближайший чип), дальше живёт своей жизнью.
+  const { days: globalDays } = usePeriod();
+  const [filterDays, setFilterDays] = useState(() =>
+    QUICK_PRESETS.reduce(
+      (best, q) => (Math.abs(q.days - globalDays) < Math.abs(best - globalDays) ? q.days : best),
+      QUICK_PRESETS[0].days,
+    ),
+  );
   const [customMode, setCustomMode] = useState(false);
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');

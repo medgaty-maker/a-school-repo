@@ -659,6 +659,41 @@ export class MetaService {
     return { refreshed, failed };
   }
 
+  // Метрики Instagram за произвольное окно (since/until, unix-секунды) — для помесячного сравнения.
+  private async fetchIgMonthlyMetrics(
+    igId: string,
+    encodedToken: string,
+    since: number,
+    until: number,
+  ): Promise<{ views: number; reach: number; accounts_engaged: number; profile_views: number; website_clicks: number; total_interactions: number }> {
+    const out = { views: 0, reach: 0, accounts_engaged: 0, profile_views: 0, website_clicks: 0, total_interactions: 0 };
+    const range = `since=${since}&until=${until}`;
+    // views — только period=day + metric_type=total_value (агрегат за окно)
+    try {
+      const r = await fetch(`${IG_API_BASE}/${igId}/insights?metric=views&period=day&metric_type=total_value&${range}&access_token=${encodedToken}`);
+      const j = (await r.json()) as { data?: Array<{ name: string; total_value?: { value: number } }> };
+      const m = j.data?.find((d) => d.name === 'views');
+      if (m?.total_value?.value != null) out.views = m.total_value.value;
+    } catch (e) { this.logger.warn(`IG month views err: ${(e as Error).message}`); }
+    // accounts_engaged / profile_views / website_clicks / total_interactions
+    try {
+      const metrics = 'accounts_engaged,profile_views,website_clicks,total_interactions';
+      const r = await fetch(`${IG_API_BASE}/${igId}/insights?metric=${metrics}&period=day&metric_type=total_value&${range}&access_token=${encodedToken}`);
+      const j = (await r.json()) as { data?: Array<{ name: string; total_value?: { value: number } }> };
+      for (const m of j.data ?? []) {
+        if (m.total_value?.value != null && m.name in out) (out as Record<string, number>)[m.name] = m.total_value.value;
+      }
+    } catch (e) { this.logger.warn(`IG month eng err: ${(e as Error).message}`); }
+    // reach — сумма дневных значений за окно
+    try {
+      const r = await fetch(`${IG_API_BASE}/${igId}/insights?metric=reach&period=day&${range}&access_token=${encodedToken}`);
+      const j = (await r.json()) as { data?: Array<{ name: string; values?: Array<{ value: number }> }> };
+      const m = j.data?.find((d) => d.name === 'reach');
+      if (m?.values) out.reach = m.values.reduce((s, v) => s + (v.value || 0), 0);
+    } catch (e) { this.logger.warn(`IG month reach err: ${(e as Error).message}`); }
+    return out;
+  }
+
   private requireEnv(key: string): string {
     const val = process.env[key];
     if (!val) throw new BadRequestException(`Missing env var: ${key}`);
@@ -829,14 +864,32 @@ export class MetaService {
     const periodStart = new Date(now);
     periodStart.setUTCDate(periodStart.getUTCDate() - 28);
 
+    // Помесячные значения для сравнения «этот месяц vs прошлый» (календарные месяцы)
+    const curStart = Math.floor(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) / 1000);
+    const prevStart = Math.floor(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1) / 1000);
+    const monthBoundary = curStart; // конец прошлого месяца = начало текущего
+    const nowTs = Math.floor(now.getTime() / 1000);
+    const cur = await this.fetchIgMonthlyMetrics(igId, encodedToken, curStart, nowTs);
+    const prev = await this.fetchIgMonthlyMetrics(igId, encodedToken, prevStart, monthBoundary);
+
     const snapshotMetrics: Array<[string, number]> = [
       ['followers_count', followersCount],
       ['reach_28d', reach],
+      // Историческое имя ключа: impressions_28d фактически хранит accounts_engaged
+      // (фронт подписывает «Вовлечённость»). Оставляем для совместимости и пишем честный ключ рядом.
       ['impressions_28d', accountsEngaged],
+      ['accounts_engaged_28d', accountsEngaged],
       ['views_28d', impressions28d],
       ['total_interactions_28d', totalInteractions],
       ['profile_visits_28d', profileViews],
       ['website_clicks_28d', websiteClicks],
+      // Помесячно: текущий месяц + прошлый (для дельты на карточке)
+      ['views_month', cur.views], ['views_month_prev', prev.views],
+      ['reach_month', cur.reach], ['reach_month_prev', prev.reach],
+      ['accounts_engaged_month', cur.accounts_engaged], ['accounts_engaged_month_prev', prev.accounts_engaged],
+      ['profile_views_month', cur.profile_views], ['profile_views_month_prev', prev.profile_views],
+      ['website_clicks_month', cur.website_clicks], ['website_clicks_month_prev', prev.website_clicks],
+      ['total_interactions_month', cur.total_interactions], ['total_interactions_month_prev', prev.total_interactions],
     ];
 
     await this.prisma.snapshot.createMany({

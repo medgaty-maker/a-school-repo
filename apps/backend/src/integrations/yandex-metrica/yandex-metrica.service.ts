@@ -46,6 +46,19 @@ function resolveDates(preset: string): { dateFrom: string; dateTo: string } {
       return { dateFrom: fmt(sub(now, 14)), dateTo: fmt(now) };
     case 'last_28d':
       return { dateFrom: fmt(sub(now, 28)), dateTo: fmt(now) };
+    case 'last_30d':
+      return { dateFrom: fmt(sub(now, 30)), dateTo: fmt(now) };
+    case 'last_90d':
+      return { dateFrom: fmt(sub(now, 90)), dateTo: fmt(now) };
+    case 'last_365d':
+    case 'this_year':
+      return { dateFrom: fmt(sub(now, 365)), dateTo: fmt(now) };
+    case 'today':
+      return { dateFrom: fmt(now), dateTo: fmt(now) };
+    case 'yesterday': {
+      const y = sub(now, 1);
+      return { dateFrom: fmt(y), dateTo: fmt(y) };
+    }
     case 'this_month': {
       const from = new Date(now.getFullYear(), now.getMonth(), 1);
       return { dateFrom: fmt(from), dateTo: fmt(now) };

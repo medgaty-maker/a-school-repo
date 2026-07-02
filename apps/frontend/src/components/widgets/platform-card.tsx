@@ -30,7 +30,8 @@ const COLORS = {
 } as const;
 
 // Метрики на карточке для каждой платформы (ТЗ §7.2)
-const METRICS_BY_PLATFORM: Record<string, Array<{ key: string; label: string; hint?: string }>> = {
+// prevKey — ключ значения за прошлый период (показываем дельту ▲/▼)
+const METRICS_BY_PLATFORM: Record<string, Array<{ key: string; label: string; hint?: string; prevKey?: string }>> = {
   YOUTUBE: [
     { key: 'subscribers_total', label: 'Подписчики' },
     { key: 'views_28d', label: 'Просмотры (28д)' },
@@ -41,12 +42,12 @@ const METRICS_BY_PLATFORM: Record<string, Array<{ key: string; label: string; hi
   ],
   INSTAGRAM: [
     { key: 'followers_count', label: 'Подписчики' },
-    { key: 'views_28d', label: 'Просмотры (28д)', hint: 'всего просмотров контента по аккаунту за 28 дней (Reels, посты, истории)' },
-    { key: 'impressions_28d', label: 'Вовлечённость (28д)', hint: 'аккаунтов взаимодействовали' },
-    { key: 'reach_28d', label: 'Охват (28д)' },
-    { key: 'profile_visits_28d', label: 'Посещения профиля' },
-    { key: 'website_clicks_28d', label: 'Клики по ссылке' },
-    { key: 'total_interactions_28d', label: 'Взаимодействие (28д)', hint: 'лайки + комментарии + репосты + сохранения' },
+    { key: 'views_month', prevKey: 'views_month_prev', label: 'Просмотры (этот месяц)', hint: 'всего просмотров контента (Reels, посты, истории), сравнение с прошлым месяцем' },
+    { key: 'accounts_engaged_month', prevKey: 'accounts_engaged_month_prev', label: 'Вовлечённость (мес)', hint: 'аккаунтов взаимодействовали' },
+    { key: 'reach_month', prevKey: 'reach_month_prev', label: 'Охват (мес)' },
+    { key: 'profile_views_month', prevKey: 'profile_views_month_prev', label: 'Посещения профиля (мес)' },
+    { key: 'website_clicks_month', prevKey: 'website_clicks_month_prev', label: 'Клики по ссылке (мес)' },
+    { key: 'total_interactions_month', prevKey: 'total_interactions_month_prev', label: 'Взаимодействие (мес)', hint: 'лайки + комментарии + репосты + сохранения' },
   ],
   FACEBOOK: [
     { key: 'page_reach_28d', label: 'Охват страницы' },
@@ -91,6 +92,7 @@ export function PlatformCard({ platform, data }: Props) {
         <div className="grid grid-cols-2 gap-3">
           {metrics.map((m) => {
             const v = data.metrics[m.key];
+            const prev = m.prevKey != null ? data.metrics[m.prevKey] : undefined;
             return (
               <div key={m.key} className="space-y-0.5">
                 <div className="text-xs text-muted-foreground flex items-center gap-1">
@@ -102,9 +104,15 @@ export function PlatformCard({ platform, data }: Props) {
                 {m.hint && (
                   <div className="text-[10px] text-muted-foreground/60 leading-tight">{m.hint}</div>
                 )}
-                <div className="font-semibold">
-                  {v != null ? formatNumber(v) : '—'}
+                <div className="flex items-baseline gap-2">
+                  <div className="font-semibold">
+                    {v != null ? formatNumber(v) : '—'}
+                  </div>
+                  <MoMDelta current={v} prev={prev} />
                 </div>
+                {prev != null && (
+                  <div className="text-[10px] text-muted-foreground/60">пр. месяц: {formatNumber(prev)}</div>
+                )}
               </div>
             );
           })}
@@ -117,6 +125,19 @@ export function PlatformCard({ platform, data }: Props) {
         </div>
       )}
     </div>
+  );
+}
+
+// Дельта «текущий vs прошлый месяц» — ▲ прирост (зелёный) / ▼ отток (красный)
+function MoMDelta({ current, prev }: { current?: number; prev?: number }) {
+  if (current == null || prev == null || prev === 0) return null;
+  const pct = Math.round(((current - prev) / prev) * 1000) / 10;
+  if (pct === 0) return <span className="text-[11px] text-muted-foreground">0%</span>;
+  const up = pct > 0;
+  return (
+    <span className={`text-[11px] font-medium ${up ? 'text-success' : 'text-danger'}`}>
+      {up ? '▲' : '▼'} {Math.abs(pct)}%
+    </span>
   );
 }
 
