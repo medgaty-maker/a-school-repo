@@ -696,8 +696,17 @@ export class BitrixService {
   // Воронки с явным маппингом продаж. Для них «продажа» = только стадии из набора выше.
   // Для остальных воронок «продажа» = STAGE_SEMANTIC_ID='S' (isWon), как раньше.
   private static readonly SALE_MAPPED_CATEGORIES = new Set<string>(['28', '48', '52', '58']);
+  // Служебные воронки: их «выигранные» сделки — не продажи (оплата должника,
+  // отчисление, документооборот), в «Успешных»/«Продажах» не учитываются.
+  private static readonly SALE_EXCLUDED_CATEGORIES = new Set<string>([
+    '20', // Должники крупные
+    '22', // Должники до 2-х месяцев
+    '50', // 2. Отчисление
+    '66', // office договора
+  ]);
 
   private isSaleDeal(stageId: string, categoryId: string | null, isWon: boolean): boolean {
+    if (categoryId && BitrixService.SALE_EXCLUDED_CATEGORIES.has(categoryId)) return false;
     if (BitrixService.SALE_STAGE_IDS.has(stageId)) return true;
     if (categoryId && BitrixService.SALE_MAPPED_CATEGORIES.has(categoryId)) return false;
     return isWon;
