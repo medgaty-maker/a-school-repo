@@ -217,7 +217,11 @@ export class MetaService {
       where: { slug },
       select: { metaCampaignIds: true },
     });
-    return (p?.metaCampaignIds ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+    const ids = (p?.metaCampaignIds ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+    // '*' — проекту принадлежит весь рекламный аккаунт (без фильтра по кампаниям).
+    // Пустой список по-прежнему означает «у проекта нет рекламы» → нули.
+    if (ids.includes('*')) return undefined;
+    return ids;
   }
 
   // campaignIds: undefined → весь аккаунт; [] → проект без кампаний (0); [..] → фильтр по кампаниям
