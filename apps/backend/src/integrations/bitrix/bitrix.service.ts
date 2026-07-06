@@ -337,6 +337,9 @@ export class BitrixService {
       .filter((d) => this.isSaleDeal(d.stageId, d.categoryId, d.isWon))
       .filter((d) => (d.saleAt ?? d.closeDate ?? d.dateCreate) >= since);
     const won = salesInPeriod.length;
+    // Разбивка продаж: Лагерь (воронка 58) vs Школа (все остальные)
+    const wonCamp = salesInPeriod.filter((d) => d.categoryId === '58').length;
+    const wonSchool = won - wonCamp;
     const lost = deals.filter((d) => d.isLost).length;
     const inProgress = deals.filter((d) => !isSale(d) && !d.isLost).length;
     const totalAmount = salesInPeriod.reduce((s, d) => s + Number(d.opportunity ?? 0), 0);
@@ -346,6 +349,8 @@ export class BitrixService {
       summary: {
         total,
         won,
+        wonSchool,
+        wonCamp,
         lost,
         inProgress,
         conversionRate: total > 0 ? Math.round((won / total) * 100 * 10) / 10 : 0,

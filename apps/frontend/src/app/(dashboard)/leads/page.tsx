@@ -32,6 +32,8 @@ type FunnelData = {
   summary: {
     total: number;
     won: number;
+    wonSchool?: number;
+    wonCamp?: number;
     lost: number;
     inProgress: number;
     conversionRate: number;
@@ -130,6 +132,7 @@ function LeadsContent() {
   const [leadsSummary, setLeadsSummary] = useState<LeadsSummary | null>(null);
   const [salesFunnels, setSalesFunnels] = useState<SalesFunnelsData | null>(null);
   const [openFunnel, setOpenFunnel] = useState<string | null>(null);
+  const [wonOpen, setWonOpen] = useState(false);
 
   // Фильтр периода для детальных блоков: быстрые пресеты по дням или свой диапазон.
   // Стартует от глобального ?period= (ближайший чип), дальше живёт своей жизнью.
@@ -178,8 +181,8 @@ function LeadsContent() {
         apiFetch<Deal[]>(`/bitrix/deals?days=${days}&limit=20`, { token }),
         apiFetch<StagesBreakdownData>(`/bitrix/stages-breakdown?days=${days}`, { token }),
         apiFetch<PipelineStagesData>('/bitrix/pipeline-stages?days=90', { token }).catch(() => null),
-        // Обзор «Новые сделки» — фиксированные периоды, не зависит от фильтра
-        apiFetch<LeadsSummary>('/bitrix/leads-summary', { token }).catch(() => null),
+        // Обзор «Новые сделки» — фиксированные пресеты + custom-диапазон для KPI «Лиды»
+        apiFetch<LeadsSummary>(`/bitrix/leads-summary${rangeQs}`, { token }).catch(() => null),
         apiFetch<SalesFunnelsData>(`/bitrix/sales-funnels${rangeQs}`, { token }).catch(() => null),
       ]);
       setStatus(s);
@@ -424,20 +427,54 @@ function LeadsContent() {
       </section>
 
       {/* KPI */}
-      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <KpiCard
+          label="Лиды (новые)"
+          value={leadsSummary?.custom?.leads ?? null}
+          pending={loading}
+          icon={<Users className="size-4" />}
+          hint="crm.lead, созданные за период"
+        />
         <KpiCard
           label="Всего сделок"
           value={funnel?.summary.total ?? null}
           pending={loading}
           icon={<Users className="size-4" />}
         />
-        <KpiCard
-          label="Успешных"
-          value={funnel?.summary.won ?? null}
-          pending={loading}
-          icon={<CheckCircle className="size-4" />}
-          status="good"
-        />
+        {/* Успешных — раскрывается на Школа / Лагерь */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setWonOpen((v) => !v)}
+            className="block w-full h-full text-left rounded-xl ring-1 ring-primary/30 hover:ring-2 hover:ring-primary/60 transition"
+            title="Показать разбивку Школа / Лагерь"
+          >
+            <KpiCard
+              label="Успешных"
+              value={funnel?.summary.won ?? null}
+              pending={loading}
+              icon={<ChevronDown className={`size-4 text-primary transition-transform ${wonOpen ? 'rotate-180' : ''}`} />}
+              status="good"
+              hint="нажмите для разбивки"
+            />
+          </button>
+          {wonOpen && funnel && (
+            <div className="absolute z-20 top-full left-0 right-0 mt-1 border border-border rounded-lg bg-background shadow-lg divide-y divide-border">
+              <div className="px-3 py-2 flex items-center justify-between text-sm">
+                <span>Школа</span>
+                <span className="font-semibold tabular-nums">{formatNumber(funnel.summary.wonSchool ?? 0)}</span>
+              </div>
+              <div className="px-3 py-2 flex items-center justify-between text-sm">
+                <span>Лагерь</span>
+                <span className="font-semibold tabular-nums">{formatNumber(funnel.summary.wonCamp ?? 0)}</span>
+              </div>
+              <div className="px-3 py-1.5 flex items-center justify-between text-xs text-muted-foreground">
+                <span>Всего</span>
+                <span className="tabular-nums">{formatNumber(funnel.summary.won)}</span>
+              </div>
+            </div>
+          )}
+        </div>
         <KpiCard
           label="Конверсия"
           value={funnel ? `${funnel.summary.conversionRate}%` : null}
