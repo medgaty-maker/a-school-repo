@@ -10,10 +10,12 @@ import { YandexMetricaService } from './yandex-metrica/yandex-metrica.service';
 import { YandexMetricaController } from './yandex-metrica/yandex-metrica.controller';
 import { TikTokService } from './tiktok/tiktok.service';
 import { TikTokController } from './tiktok/tiktok.controller';
+import { KabinetyService } from './kabinety/kabinety.service';
+import { KabinetyController } from './kabinety/kabinety.controller';
 
 @Module({
-  controllers: [YoutubeController, MetaController, BitrixController, YandexMetricaController, TikTokController],
-  providers: [YoutubeService, MetaService, BitrixService, CryptoService, YandexMetricaService, TikTokService],
-  exports: [YoutubeService, MetaService, BitrixService, CryptoService, YandexMetricaService, TikTokService],
+  controllers: [YoutubeController, MetaController, BitrixController, YandexMetricaController, TikTokController, KabinetyController],
+  providers: [YoutubeService, MetaService, BitrixService, CryptoService, YandexMetricaService, TikTokService, KabinetyService],
+  exports: [YoutubeService, MetaService, BitrixService, CryptoService, YandexMetricaService, TikTokService, KabinetyService],
 })
 export class IntegrationsModule {}

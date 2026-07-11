@@ -64,6 +64,10 @@ type YoutubeDetail = {
 
 type AdInsights = { leads: number; spend: number; impressions: number; clicks: number; reach: number; ctr: number; cpc: number; cpl: number; roas: number; kztRate: number };
 type LeadBreakdown = { total: number };
+type KabinetySummary = {
+  total: number; newStudents: number; existing: number; unassigned: number;
+  byGrade: Array<{ grade: string; count: number }>;
+};
 type PipelineFunnel = {
   won: number; inProgress: number; lost: number; total: number; totalAmount: number;
   pipelines?: Array<{ categoryId: string; name: string; won: number; inProgress: number; total: number }>;
@@ -234,6 +238,7 @@ function ProjectDetailContent() {
   const [aiLoading, setAiLoading] = useState(false);
   const [kpiLoading, setKpiLoading] = useState(true);
   const [salesOpen, setSalesOpen] = useState(false);
+  const [kabinety, setKabinety] = useState<KabinetySummary | null>(null);
 
   const { period, days: periodDays } = usePeriod();
   const periodLabel = PERIODS.find((p) => p.value === period)?.label ?? period;
@@ -268,6 +273,13 @@ function ProjectDetailContent() {
         }
       })
       .catch((e) => setError((e as Error).message));
+
+    // Кол-во детей в школе (kabinety.aubakirova.school) — только для a-school
+    if (slug === 'a-school') {
+      apiFetch<KabinetySummary>('/integrations/kabinety/summary', { token })
+        .then(setKabinety)
+        .catch(() => null);
+    }
 
     // KPI data: leads + Bitrix pipeline + Meta daily chart + Yandex daily
     setKpiLoading(true);
@@ -421,6 +433,38 @@ function ProjectDetailContent() {
           </div>
         </div>
       </section>
+
+      {/* Ученики школы — из kabinety.aubakirova.school (только a-school) */}
+      {kabinety && (
+        <section>
+          <h2 className="text-lg font-semibold mb-3">Ученики · 2026/2027</h2>
+          <div className="border border-border rounded-xl bg-background p-5 space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="rounded-lg border border-border p-4">
+                <div className="text-xs text-muted-foreground">Всего детей</div>
+                <div className="text-2xl font-bold tabular-nums mt-1">{formatNumber(kabinety.total)}</div>
+              </div>
+              <div className="rounded-lg border border-border p-4">
+                <div className="text-xs text-muted-foreground">Новых</div>
+                <div className="text-2xl font-bold tabular-nums mt-1 text-success">{formatNumber(kabinety.newStudents)}</div>
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground mb-2">По параллелям</div>
+              <div className="flex flex-wrap gap-2">
+                {kabinety.byGrade.map((g) => (
+                  <span key={g.grade} className="text-xs px-2.5 py-1 rounded-lg bg-muted tabular-nums">
+                    {g.grade === '—' ? 'Без кабинета' : `${g.grade} класс`}: <strong>{g.count}</strong>
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="text-xs text-muted-foreground border-t border-border pt-3">
+              Источник: kabinety.aubakirova.school · распределение по кабинетам
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Динамика — мультиплатформенный график */}
       <section>
