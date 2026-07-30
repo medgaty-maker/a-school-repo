@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
 import { apiFetch } from '@/lib/api-client';
+import { MonthlyPacingBlock, type MonthlyPacing } from '@/components/widgets/monthly-pacing';
 
 type MetaStatus = { configured: boolean; adAccountId: string | null; lastSyncAt: string | null };
 type CounterLeads = { counterId: string; name: string; phone: number; messenger: number; form: number; social: number; total: number };
@@ -91,6 +92,7 @@ export default function AdsPage() {
   const [error, setError] = useState<string | null>(null);
   const [leads, setLeads] = useState<LeadBreakdown | null>(null);
   const [leadsLoading, setLeadsLoading] = useState(false);
+  const [yandexPacing, setYandexPacing] = useState<MonthlyPacing | null>(null);
   const [sortBy, setSortBy] = useState<'default' | 'leads' | 'spend' | 'cpl'>('default');
 
   const token = typeof document !== 'undefined' ? readCookie('access_token') : null;
@@ -123,6 +125,9 @@ export default function AdsPage() {
       .then(setLeads)
       .catch(() => setLeads(null))
       .finally(() => setLeadsLoading(false));
+    apiFetch<MonthlyPacing>('/integrations/yandex-metrica/monthly-pacing', { token })
+      .then(setYandexPacing)
+      .catch(() => setYandexPacing(null));
   }, [datePreset, token]);
 
   const sortedCampaigns = useMemo(() => {
@@ -196,6 +201,9 @@ export default function AdsPage() {
 
       {/* Campaign spend chart */}
       <CampaignSpendChart campaigns={campaigns} loading={loading} />
+
+      {/* Yandex Metrica — помесячный разрез (визиты + лиды) */}
+      <MonthlyPacingBlock data={yandexPacing} title="Яндекс.Метрика · помесячно" />
 
       {/* Yandex Metrica leads */}
       <YandexLeadsSection leads={leads} loading={leadsLoading} />

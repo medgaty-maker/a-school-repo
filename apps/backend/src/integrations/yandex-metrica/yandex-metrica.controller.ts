@@ -29,6 +29,12 @@ export class YandexMetricaController {
     return this.svc.getDailyVisits(datePreset ?? 'last_28d', counters);
   }
 
+  @Get('monthly-pacing')
+  async getMonthlyPacing(@Query('project') project?: string) {
+    const counters = await this.svc.resolveProjectCounterIds(project);
+    return this.svc.getMonthlyPacing(counters);
+  }
+
   @Get('ai-insights')
   getAiInsights() {
     return this.svc.getAiInsights();

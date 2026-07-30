@@ -45,6 +45,7 @@ function OverviewContent() {
   const [aggregateDaily, setAggregateDaily] = useState<Array<{ day: string; views: number }>>([]);
   const [token, setToken] = useState<string | null>(null);
   const [bitrixSummary, setBitrixSummary] = useState<{ total: number; won: number; conversionRate: number } | null>(null);
+  const [bitrixLeads, setBitrixLeads] = useState<number | null>(null);
   const [bitrixStages, setBitrixStages] = useState<Array<{ stageId: string; stageName: string; count: number; isWon: boolean; isLost: boolean }>>([]);
   const [metaInsights, setMetaInsights] = useState<{ spend: number; cpl: number; leads: number } | null>(null);
   const [metaConfigured, setMetaConfigured] = useState(false);
@@ -65,6 +66,11 @@ function OverviewContent() {
       .catch(console.error);
     apiFetch<{ stages: Array<{ stageId: string; stageName: string; count: number; isWon: boolean; isLost: boolean }>; summary: { total: number; won: number; conversionRate: number } }>(`/bitrix/funnel?days=${days}`, { token })
       .then((f) => { setBitrixSummary(f.summary); setBitrixStages(f.stages); })
+      .catch(() => null);
+    // Реальные лиды (crm.lead), не все сделки — берём ближайший пресет к периоду
+    const leadKey = days <= 7 ? '7d' : days <= 14 ? '14d' : days <= 31 ? '31d' : days <= 90 ? '90d' : '180d';
+    apiFetch<{ presets: Record<string, { leads: number }> }>('/bitrix/leads-summary', { token })
+      .then((ls) => setBitrixLeads(ls.presets[leadKey]?.leads ?? null))
       .catch(() => null);
     apiFetch<{ configured: boolean }>('/integrations/meta/status', { token })
       .then((s) => {
@@ -138,12 +144,12 @@ function OverviewContent() {
           />
           <KpiCard
             label="Лиды (Bitrix24)"
-            value={bitrixSummary?.total ?? null}
-            pending={bitrixSummary === null}
+            value={bitrixLeads ?? null}
+            pending={bitrixLeads === null}
             pendingNote="Подключите Bitrix24 в «Настройках»"
-            hint={bitrixSummary ? `за ${periodLabel.toLowerCase()}` : undefined}
+            hint={bitrixLeads != null ? `crm.lead за ${periodLabel.toLowerCase()}` : undefined}
             icon={<UserPlus className="size-4" />}
-            status={bitrixSummary && bitrixSummary.total > 0 ? 'good' : 'neutral'}
+            status={bitrixLeads && bitrixLeads > 0 ? 'good' : 'neutral'}
           />
           <KpiCard
             label="CPL"
@@ -155,11 +161,11 @@ function OverviewContent() {
             status={metaInsights && metaInsights.cpl > 0 ? 'good' : 'neutral'}
           />
           <KpiCard
-            label="Зачислений (выиграно)"
+            label="Продажи (Bitrix24)"
             value={bitrixSummary?.won ?? null}
             pending={bitrixSummary === null}
             pendingNote="Подключите Bitrix24 в «Настройках»"
-            hint={bitrixSummary ? `конверсия ${bitrixSummary.total > 0 ? Math.round((bitrixSummary.won / bitrixSummary.total) * 100) : 0}%` : undefined}
+            hint={bitrixSummary && bitrixLeads ? `конверсия лид→продажа ${bitrixLeads > 0 ? Math.round((bitrixSummary.won / bitrixLeads) * 100) : 0}%` : bitrixSummary ? `за ${periodLabel.toLowerCase()}` : undefined}
             icon={<GraduationCap className="size-4" />}
             status={bitrixSummary && bitrixSummary.won > 0 ? 'good' : 'neutral'}
           />

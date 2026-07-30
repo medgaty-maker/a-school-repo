@@ -8,6 +8,7 @@ import { KpiCard } from '@/components/kpi-card';
 import { DonutChart } from '@/components/widgets/donut-chart';
 import { formatNumber } from '@/lib/utils';
 import { usePeriod } from '@/lib/use-period';
+import { MonthlyPacingBlock, type MonthlyPacing } from '@/components/widgets/monthly-pacing';
 import {
   BarChart,
   Bar,
@@ -79,6 +80,7 @@ type SalesFunnelStage = { stageId: string; stageName: string; count: number; isW
 type SalesFunnel = { categoryId: string; name: string; total: number; newInPeriod: number; stages: SalesFunnelStage[] };
 type SalesFunnelsData = { period: { from: string; to: string }; funnels: SalesFunnel[] };
 
+
 const LEAD_PRESETS: { key: string; label: string }[] = [
   { key: '7d', label: '7 дней' },
   { key: '14d', label: '14 дней' },
@@ -131,6 +133,7 @@ function LeadsContent() {
 
   const [leadsSummary, setLeadsSummary] = useState<LeadsSummary | null>(null);
   const [salesFunnels, setSalesFunnels] = useState<SalesFunnelsData | null>(null);
+  const [pacing, setPacing] = useState<MonthlyPacing | null>(null);
   const [openFunnel, setOpenFunnel] = useState<string | null>(null);
   const [wonOpen, setWonOpen] = useState(false);
 
@@ -174,7 +177,7 @@ function LeadsContent() {
     setLoading(true);
     try {
       const rangeQs = `?from=${effective.from}&to=${effective.to}`;
-      const [s, f, src, d, sb, ps, ls, sf] = await Promise.all([
+      const [s, f, src, d, sb, ps, ls, sf, pc] = await Promise.all([
         apiFetch<Status>('/bitrix/status', { token }),
         apiFetch<FunnelData>(`/bitrix/funnel?days=${days}`, { token }),
         apiFetch<SourceData[]>(`/bitrix/sources?days=${days}`, { token }),
@@ -184,6 +187,7 @@ function LeadsContent() {
         // Обзор «Новые сделки» — фиксированные пресеты + custom-диапазон для KPI «Лиды»
         apiFetch<LeadsSummary>(`/bitrix/leads-summary${rangeQs}`, { token }).catch(() => null),
         apiFetch<SalesFunnelsData>(`/bitrix/sales-funnels${rangeQs}`, { token }).catch(() => null),
+        apiFetch<MonthlyPacing>('/bitrix/monthly-pacing', { token }).catch(() => null),
       ]);
       setStatus(s);
       setFunnel(f);
@@ -193,6 +197,7 @@ function LeadsContent() {
       if (ps) setPipelineStages(ps);
       if (ls) setLeadsSummary(ls);
       if (sf) setSalesFunnels(sf);
+      if (pc) setPacing(pc);
     } catch (e) {
       console.error(e);
     } finally {
@@ -300,15 +305,18 @@ function LeadsContent() {
         <div className="text-sm px-4 py-2 rounded-lg bg-muted">{syncMsg}</div>
       )}
 
+      {/* Помесячный разрез Bitrix: 2 полных месяца + текущий с прогнозом */}
+      <MonthlyPacingBlock data={pacing} />
+
       {/* Обзор: новые сделки по фиксированным периодам (не зависит от фильтра) */}
       <section className="border border-border rounded-xl bg-background p-5">
         <div className="flex items-baseline justify-between mb-1">
-          <h2 className="font-semibold">Новые сделки</h2>
+          <h2 className="font-semibold">Все обращения (сделки во всех воронках)</h2>
           <span className="text-xs text-muted-foreground">
             всего сделок в базе: {formatNumber(leadsSummary?.total.deals ?? 0)}
           </span>
         </div>
-        <p className="text-xs text-muted-foreground mb-4">Созданные за период (все воронки) · быстрый обзор</p>
+        <p className="text-xs text-muted-foreground mb-4">Все созданные сделки, включая авто-сделки от переписок и заявок. Продажные воронки — в блоке «Помесячно» выше.</p>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           {LEAD_PRESETS.map((p) => {
             const b = leadsSummary?.presets[p.key];

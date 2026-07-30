@@ -71,6 +71,13 @@ export class YoutubeController {
       .sort((a, b) => a.day.localeCompare(b.day));
   }
 
+  // Ручной запуск обновления YouTube-токенов (то же, что делает ежедневный крон)
+  @Roles(Role.ADMIN, Role.MARKETING_DIRECTOR)
+  @Get('refresh-tokens')
+  refreshTokens() {
+    return this.youtube.refreshYoutubeTokens();
+  }
+
   @Roles(Role.ADMIN, Role.MARKETING_DIRECTOR)
   @Get('oauth/start/:projectPlatformId')
   start(@Param('projectPlatformId') projectPlatformId: string, @Res() res: Response) {

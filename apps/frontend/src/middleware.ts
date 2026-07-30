@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 const PROTECTED_PREFIXES = [
-  '/overview', '/projects', '/ads', '/leads', '/traffic',
+  '/overview', '/analytics', '/projects', '/ads', '/leads', '/traffic',
   '/whatsapp', '/utm', '/compare', '/reports', '/settings', '/profile',
 ];
 

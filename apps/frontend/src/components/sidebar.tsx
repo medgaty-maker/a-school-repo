@@ -6,12 +6,13 @@ import { cn } from '@/lib/utils';
 import { useUiStore } from '@/lib/ui-store';
 import {
   LayoutDashboard, Film, Megaphone, Target, Globe, MessageCircle,
-  Link2, BarChart3, FileDown, Settings, X,
+  Link2, BarChart3, FileDown, Settings, X, Activity,
 } from 'lucide-react';
 
 // 11 разделов — ТЗ §5.1
 const NAV = [
   { href: '/overview', label: 'Обзор', icon: LayoutDashboard },
+  { href: '/analytics', label: 'Аналитика', icon: Activity },
   { href: '/projects', label: 'Проекты', icon: Film },
   { href: '/ads', label: 'Реклама (Meta Ads)', icon: Megaphone },
   { href: '/leads', label: 'Лиды и продажи', icon: Target },

@@ -13,6 +13,7 @@ import { AuditModule } from './audit/audit.module';
 import { InsightsModule } from './insights/insights.module';
 import { UtmModule } from './utm/utm.module';
 import { NotesModule } from './notes/notes.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { RolesGuard } from './auth/roles.guard';
@@ -32,6 +33,7 @@ import { AuditInterceptor } from './audit/audit.interceptor';
     InsightsModule,
     UtmModule,
     NotesModule,
+    AnalyticsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

@@ -76,6 +76,9 @@ function resolveDates(preset: string): { dateFrom: string; dateTo: string } {
 @Injectable()
 export class YandexMetricaService {
   private readonly logger = new Logger(YandexMetricaService.name);
+  // Кэш помесячного разреза — он делает десятки запросов к API, без кэша упираемся в 429.
+  private pacingCache = new Map<string, { at: number; data: unknown }>();
+  private readonly PACING_TTL = 10 * 60 * 1000;
 
   private readonly counterGoals: Record<string, { name: string; phone?: number; messenger?: number; form?: number; social?: number }> = {
     '105849697': { name: 'Авторская школа', phone: 515884639, messenger: 495561583, form: 495567928, social: 496509659 },
@@ -236,6 +239,124 @@ export class YandexMetricaService {
       period: `${dateFrom} — ${dateTo}`,
       counters,
     };
+  }
+
+  // Помесячный разрез (визиты + лиды): 2 полных месяца + текущий с прогнозом.
+  // Тянем дневные ряды за 3 месяца (по 1 запросу на метрику/цель) и раскладываем по месяцам.
+  async getMonthlyPacing(filterIds?: string[]) {
+    const cacheKey = filterIds?.slice().sort().join(',') ?? 'all';
+    const cached = this.pacingCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < this.PACING_TTL) return cached.data as { metrics: unknown[] };
+
+    const RU = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+    const token = await this.getToken();
+    const cfg = await this.prisma.yandexMetricaConfig.findFirst();
+    if (!token || !cfg) return { metrics: [] };
+    let counterIds = cfg.counterIds.split(',').map((s) => s.trim()).filter(Boolean);
+    if (filterIds) counterIds = counterIds.filter((c) => filterIds.includes(c));
+
+    const now = new Date();
+    const y = now.getUTCFullYear();
+    const mo = now.getUTCMonth();
+    const mStart = (k: number) => new Date(Date.UTC(y, mo + k, 1));
+    const months = [mStart(-2), mStart(-1), mStart(0)];
+    const nextStart = mStart(1);
+    const elapsedMs = now.getTime() - months[2].getTime();
+    const prevSameDayEnd = new Date(months[1].getTime() + elapsedMs);
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+    const label = (d: Date) => `${RU[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+
+    // дневной ряд метрики за весь 3-мес период (по всем счётчикам, суммируем в map по датам)
+    const dailyMap = async (metric: string): Promise<Map<string, number>> => {
+      const map = new Map<string, number>();
+      for (const c of counterIds) {
+        const url = new URL(API_BASE);
+        url.searchParams.set('id', c);
+        url.searchParams.set('metrics', metric);
+        url.searchParams.set('dimensions', 'ym:s:date');
+        url.searchParams.set('date1', fmt(months[0]));
+        url.searchParams.set('date2', fmt(now));
+        url.searchParams.set('limit', '400');
+        const res = await fetch(url.toString(), { headers: { Authorization: `OAuth ${token}` } });
+        if (!res.ok) continue;
+        const data = (await res.json()) as { data?: Array<{ dimensions: Array<{ id?: string; name?: string }>; metrics: number[] }> };
+        for (const row of data.data ?? []) {
+          const date = row.dimensions?.[0]?.name || row.dimensions?.[0]?.id || '';
+          if (!date) continue;
+          map.set(date, (map.get(date) ?? 0) + Math.round(row.metrics?.[0] ?? 0));
+        }
+      }
+      return map;
+    };
+
+    const sumRange = (map: Map<string, number>, start: Date, endExcl: Date) => {
+      let s = 0;
+      for (const [d, v] of map) {
+        const t = new Date(d + 'T00:00:00Z').getTime();
+        if (t >= start.getTime() && t < endExcl.getTime()) s += v;
+      }
+      return s;
+    };
+
+    const buildFromMap = (key: string, title: string, map: Map<string, number>) => {
+      const v0 = sumRange(map, months[0], months[1]);
+      const v1 = sumRange(map, months[1], months[2]);
+      const v2 = sumRange(map, months[2], nextStart);
+      const prevSameDay = sumRange(map, months[1], prevSameDayEnd);
+      const pacePct = prevSameDay > 0 ? Math.round((v2 / prevSameDay - 1) * 1000) / 10 : null;
+      const projection = prevSameDay > 0
+        ? Math.round(v2 * (v1 / prevSameDay))
+        : Math.round(v2 * (nextStart.getTime() - months[2].getTime()) / Math.max(elapsedMs, 1));
+      return {
+        key, title,
+        points: months.map((s, i) => ({ label: label(s), value: [v0, v1, v2][i], isCurrent: i === 2 })),
+        current: { value: v2, prevSameDay, prevFull: v1, pacePct, projection },
+      };
+    };
+
+    // визиты
+    const visitsMap = await dailyMap('ym:s:visits');
+    // лиды — сумма дневных рядов по всем целям всех счётчиков
+    const leadsMap = new Map<string, number>();
+    for (const c of counterIds) {
+      const g = this.counterGoals[c];
+      if (!g) continue;
+      for (const goalId of [g.phone, g.messenger, g.form, g.social]) {
+        if (!goalId) continue;
+        const gm = await this.goalDailyMap(token, c, goalId, fmt(months[0]), fmt(now));
+        for (const [d, v] of gm) leadsMap.set(d, (leadsMap.get(d) ?? 0) + v);
+      }
+    }
+
+    const result = {
+      asOf: now.toISOString(),
+      dayOfMonth: now.getUTCDate(),
+      metrics: [
+        buildFromMap('visits', 'Визиты (сайт)', visitsMap),
+        buildFromMap('leads', 'Лиды (Метрика)', leadsMap),
+      ],
+    };
+    this.pacingCache.set(cacheKey, { at: Date.now(), data: result });
+    return result;
+  }
+
+  private async goalDailyMap(token: string, counterId: string, goalId: number, date1: string, date2: string): Promise<Map<string, number>> {
+    const map = new Map<string, number>();
+    const url = new URL(API_BASE);
+    url.searchParams.set('id', counterId);
+    url.searchParams.set('metrics', `ym:s:goal${goalId}reaches`);
+    url.searchParams.set('dimensions', 'ym:s:date');
+    url.searchParams.set('date1', date1);
+    url.searchParams.set('date2', date2);
+    url.searchParams.set('limit', '400');
+    const res = await fetch(url.toString(), { headers: { Authorization: `OAuth ${token}` } });
+    if (!res.ok) return map;
+    const data = (await res.json()) as { data?: Array<{ dimensions: Array<{ id?: string; name?: string }>; metrics: number[] }> };
+    for (const row of data.data ?? []) {
+      const date = row.dimensions?.[0]?.name || row.dimensions?.[0]?.id || '';
+      if (date) map.set(date, (map.get(date) ?? 0) + Math.round(row.metrics?.[0] ?? 0));
+    }
+    return map;
   }
 
   async getAiInsights(): Promise<{ recommendations: any[]; summary: string; generatedAt: string } | null> {

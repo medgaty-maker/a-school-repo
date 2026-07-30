@@ -96,4 +96,11 @@ export class BitrixController {
   salesFunnels(@Query('from') from?: string, @Query('to') to?: string) {
     return this.bitrix.getSalesFunnels(from, to);
   }
+
+  // Помесячный разрез: 2 полных месяца + текущий с прогнозом
+  @Get('monthly-pacing')
+  async monthlyPacing(@Query('project') project?: string) {
+    const cat = await this.bitrix.resolveProjectCategoryIds(project);
+    return this.bitrix.getMonthlyPacing(cat);
+  }
 }

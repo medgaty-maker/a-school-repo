@@ -144,6 +144,12 @@ export class MetaController {
     return this.meta.captureInstagramSnapshot(projectPlatformId);
   }
 
+  // Помесячный разрез Instagram (просмотры/охват/вовлечённость) с прогнозом
+  @Get('instagram/:projectPlatformId/monthly-pacing')
+  instagramMonthlyPacing(@Param('projectPlatformId') projectPlatformId: string) {
+    return this.meta.getInstagramMonthlyPacing(projectPlatformId);
+  }
+
   // Ручной запуск автопродления IG-токенов (то же, что делает ежедневный cron)
   @Roles(Role.ADMIN, Role.MARKETING_DIRECTOR)
   @Post('instagram/refresh-tokens')

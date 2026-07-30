@@ -698,6 +698,57 @@ export class MetaService {
     return out;
   }
 
+  // Помесячный разрез Instagram (просмотры/охват/вовлечённость): 2 полных месяца + текущий с прогнозом.
+  async getInstagramMonthlyPacing(projectPlatformId: string) {
+    const RU = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+    const token = await this.getIgToken(projectPlatformId);
+    const encodedToken = encodeURIComponent(token);
+    const igId = 'me';
+
+    const now = new Date();
+    const y = now.getUTCFullYear();
+    const mo = now.getUTCMonth();
+    const mStart = (k: number) => new Date(Date.UTC(y, mo + k, 1));
+    const months = [mStart(-2), mStart(-1), mStart(0)];
+    const nextStart = mStart(1);
+    const elapsedMs = now.getTime() - months[2].getTime();
+    const prevSameDayEnd = new Date(months[1].getTime() + elapsedMs);
+    const ts = (d: Date) => Math.floor(d.getTime() / 1000);
+    const label = (d: Date) => `${RU[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+
+    // 4 окна: 3 месяца + «та же дата прошлого месяца»
+    const [w0, w1, w2, wPrev] = await Promise.all([
+      this.fetchIgMonthlyMetrics(igId, encodedToken, ts(months[0]), ts(months[1])),
+      this.fetchIgMonthlyMetrics(igId, encodedToken, ts(months[1]), ts(months[2])),
+      this.fetchIgMonthlyMetrics(igId, encodedToken, ts(months[2]), ts(now)),
+      this.fetchIgMonthlyMetrics(igId, encodedToken, ts(months[1]), ts(prevSameDayEnd)),
+    ]);
+
+    type IgKey = 'views' | 'reach' | 'total_interactions';
+    const build = (key: string, title: string, f: IgKey) => {
+      const v0 = w0[f], v1 = w1[f], v2 = w2[f], prevSameDay = wPrev[f];
+      const pacePct = prevSameDay > 0 ? Math.round((v2 / prevSameDay - 1) * 1000) / 10 : null;
+      const projection = prevSameDay > 0
+        ? Math.round(v2 * (v1 / prevSameDay))
+        : Math.round(v2 * (nextStart.getTime() - months[2].getTime()) / Math.max(elapsedMs, 1));
+      return {
+        key, title,
+        points: months.map((s, i) => ({ label: label(s), value: [v0, v1, v2][i], isCurrent: i === 2 })),
+        current: { value: v2, prevSameDay, prevFull: v1, pacePct, projection },
+      };
+    };
+
+    return {
+      asOf: now.toISOString(),
+      dayOfMonth: now.getUTCDate(),
+      metrics: [
+        build('views', 'Просмотры', 'views'),
+        build('reach', 'Охват', 'reach'),
+        build('interactions', 'Вовлечённость', 'total_interactions'),
+      ],
+    };
+  }
+
   private requireEnv(key: string): string {
     const val = process.env[key];
     if (!val) throw new BadRequestException(`Missing env var: ${key}`);

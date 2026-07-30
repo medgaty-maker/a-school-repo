@@ -1,4 +1,5 @@
 import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CryptoService } from '../crypto.service';
 import {
@@ -334,18 +335,54 @@ export class YoutubeService {
       }),
     });
     const j = (await r.json()) as { access_token?: string; refresh_token?: string; expires_in?: number; error?: string };
-    if (!r.ok || !j.access_token) throw new Error(`refresh failed: ${JSON.stringify(j)}`);
-
-    // Save rotated refresh_token if Google issues a new one
-    if (j.refresh_token) {
+    if (!r.ok || !j.access_token) {
+      // refresh_token умер (invalid_grant, обычно из-за режима Testing / отзыва) — помечаем EXPIRED
+      const expired = /invalid_grant|expired|revoked/i.test(JSON.stringify(j));
       await this.prisma.projectPlatform.update({
         where: { id: projectPlatformId },
-        data: { refreshTokenEnc: this.crypto.encrypt(j.refresh_token) },
-      });
+        data: {
+          status: expired ? IntegrationStatus.EXPIRED : IntegrationStatus.ERROR,
+          lastError: expired ? 'Доступ YouTube истёк — переподключите (опубликуйте приложение в Production, чтобы не слетало)' : `refresh: ${j.error ?? 'ошибка'}`,
+        },
+      }).catch(() => null);
+      throw new Error(`refresh failed: ${JSON.stringify(j)}`);
     }
+
+    // Save rotated refresh_token if Google issues a new one + фиксируем живой статус и срок
+    await this.prisma.projectPlatform.update({
+      where: { id: projectPlatformId },
+      data: {
+        ...(j.refresh_token ? { refreshTokenEnc: this.crypto.encrypt(j.refresh_token) } : {}),
+        tokenExpiresAt: new Date(Date.now() + (j.expires_in ?? 3600) * 1000),
+        status: IntegrationStatus.ACTIVE,
+        lastError: null,
+      },
+    }).catch(() => null);
 
     this.accessTokenCache.set(projectPlatformId, { token: j.access_token, fetchedAt: Date.now() });
     return j.access_token;
+  }
+
+  // Ежедневно «прогреваем» YouTube-токены: обновляем access через refresh_token.
+  // Пока refresh жив — подключение не слетает; если умер — сразу EXPIRED (видно в панели здоровья/сигналах).
+  @Cron(CronExpression.EVERY_DAY_AT_4AM, { name: 'youtube-token-refresh' })
+  async refreshYoutubeTokens(): Promise<{ ok: number; failed: number }> {
+    const pps = await this.prisma.projectPlatform.findMany({
+      where: { platform: Platform.YOUTUBE, refreshTokenEnc: { not: null }, status: { in: [IntegrationStatus.ACTIVE, IntegrationStatus.ERROR] } },
+      select: { id: true },
+    });
+    let ok = 0, failed = 0;
+    for (const pp of pps) {
+      try {
+        this.accessTokenCache.delete(pp.id); // форсим реальный refresh
+        await this.getAccessToken(pp.id);
+        ok++;
+      } catch {
+        failed++;
+      }
+    }
+    if (ok || failed) this.logger.log(`YouTube token refresh: ок ${ok}, провалов ${failed}`);
+    return { ok, failed };
   }
 
   private async fetchDetailedAnalytics(accessToken: string): Promise<YoutubeDetail> {

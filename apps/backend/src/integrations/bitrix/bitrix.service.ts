@@ -868,4 +868,129 @@ export class BitrixService {
       funnels,
     };
   }
+
+  // Воронка привлечения за период (обёртка) — окно [now-days, now].
+  async getAttractionFunnel(daysBack = 30, categoryIds?: string[]) {
+    return this.getAttractionWindow(new Date(Date.now() - daysBack * 86_400_000), new Date(), categoryIds);
+  }
+
+  // Воронка привлечения за произвольное окно: лиды → новые сделки → продажи + выручка + разбивка по воронкам.
+  async getAttractionWindow(since: Date, until: Date, categoryIds?: string[]) {
+    const salesCats = [...BitrixService.SALE_MAPPED_CATEGORIES];
+    const dealCats = categoryIds ? categoryIds.filter((c) => salesCats.includes(c)) : salesCats;
+    const dateWin = { gte: since, lt: until };
+
+    const [leads, deals, cands] = await Promise.all([
+      this.prisma.bitrixLead.count({ where: { dateCreate: dateWin } }),
+      this.prisma.bitrixDeal.count({ where: { categoryId: { in: dealCats }, dateCreate: dateWin } }),
+      this.prisma.bitrixDeal.findMany({
+        where: {
+          ...(categoryIds ? { categoryId: { in: categoryIds } } : {}),
+          OR: [{ stageId: { in: [...BitrixService.SALE_STAGE_IDS] } }, { isWon: true }],
+        },
+        select: { stageId: true, categoryId: true, categoryName: true, isWon: true, saleAt: true, closeDate: true, dateCreate: true, opportunity: true },
+      }),
+    ]);
+    const sales = cands
+      .filter((d) => this.isSaleDeal(d.stageId, d.categoryId, d.isWon))
+      .filter((d) => {
+        const t = d.saleAt ?? d.closeDate ?? d.dateCreate;
+        return t >= since && t < until;
+      });
+    const revenue = sales.reduce((s, d) => s + Number(d.opportunity ?? 0), 0);
+
+    // разбивка продаж по воронкам (фолбэк-имена для продажных воронок — categoryName бывает пустым)
+    const FUNNEL_NAMES: Record<string, string> = { '28': 'Резерв', '48': '1. Продажа', '52': '2026-2027 набор в 1 класс', '58': 'Лагерь — Сделки' };
+    const byFunnel = new Map<string, { categoryId: string; name: string; count: number; revenue: number }>();
+    for (const d of sales) {
+      const cid = d.categoryId ?? '0';
+      const cur = byFunnel.get(cid) ?? { categoryId: cid, name: d.categoryName || FUNNEL_NAMES[cid] || `Воронка ${cid}`, count: 0, revenue: 0 };
+      cur.count++;
+      cur.revenue += Number(d.opportunity ?? 0);
+      byFunnel.set(cid, cur);
+    }
+
+    return {
+      leads,
+      deals,
+      sales: sales.length,
+      revenue: Math.round(revenue),
+      salesByFunnel: [...byFunnel.values()].map((f) => ({ ...f, revenue: Math.round(f.revenue) })).sort((a, b) => b.count - a.count),
+    };
+  }
+
+  // === Помесячный разрез с прогнозом ===
+  // 2 полных месяца + текущий (факт на сегодня, темп vs прошлого месяца на ту же дату, прогноз к концу).
+  async getMonthlyPacing(categoryIds?: string[]) {
+    const RU_MONTHS = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+    const now = new Date();
+    const y = now.getUTCFullYear();
+    const m = now.getUTCMonth();
+    const mStart = (mo: number) => new Date(Date.UTC(y, mo, 1));
+    const months = [mStart(m - 2), mStart(m - 1), mStart(m)]; // начала 3 месяцев
+    const nextStart = mStart(m + 1);
+    const elapsedMs = now.getTime() - months[2].getTime(); // сколько прошло в текущем месяце
+    // «та же дата» в прошлом месяце (по прошедшему времени, устойчиво к разной длине месяцев)
+    const prevSameDayEnd = new Date(months[1].getTime() + elapsedMs);
+
+    const label = (d: Date) => `${RU_MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+    const inRange = (val: Date, start: Date, end: Date) => val >= start && val < end;
+
+    // Данные по продажам (saleAt) — фильтруем isSaleDeal в JS
+    const saleCands = await this.prisma.bitrixDeal.findMany({
+      where: {
+        ...(categoryIds ? { categoryId: { in: categoryIds } } : {}),
+        OR: [{ stageId: { in: [...BitrixService.SALE_STAGE_IDS] } }, { isWon: true }],
+      },
+      select: { stageId: true, categoryId: true, isWon: true, saleAt: true, closeDate: true, dateCreate: true },
+    });
+    const sales = saleCands
+      .filter((d) => this.isSaleDeal(d.stageId, d.categoryId, d.isWon))
+      .map((d) => d.saleAt ?? d.closeDate ?? d.dateCreate);
+
+    // «Новые сделки» считаем только по продажным воронкам (28/48/52/58) — остальные 24 воронки
+    // содержат авто-сделки от переписок/заявок (десятки тысяч шума).
+    const salesCats = [...BitrixService.SALE_MAPPED_CATEGORIES];
+    const dealCats = categoryIds ? categoryIds.filter((c) => salesCats.includes(c)) : salesCats;
+    const dealWhere = (start: Date, end: Date) => ({
+      categoryId: { in: dealCats },
+      dateCreate: { gte: start, lt: end },
+    });
+
+    // счётчики за произвольное окно
+    const countLeads = (start: Date, end: Date) =>
+      this.prisma.bitrixLead.count({ where: { dateCreate: { gte: start, lt: end } } });
+    const countDeals = (start: Date, end: Date) => this.prisma.bitrixDeal.count({ where: dealWhere(start, end) });
+    const countSales = (start: Date, end: Date) => sales.filter((d) => inRange(d, start, end)).length;
+
+    const buildMetric = async (
+      key: string,
+      title: string,
+      counter: (s: Date, e: Date) => Promise<number> | number,
+    ) => {
+      const ends = [months[1], months[2], nextStart];
+      const values = await Promise.all(months.map((s, i) => counter(s, ends[i])));
+      const current = values[2];
+      const prevFull = values[1];
+      const prevSameDay = await counter(months[1], prevSameDayEnd);
+      const pacePct = prevSameDay > 0 ? Math.round((current / prevSameDay - 1) * 1000) / 10 : null;
+      const projection = prevSameDay > 0
+        ? Math.round(current * (prevFull / prevSameDay))
+        : Math.round(current * (nextStart.getTime() - months[2].getTime()) / Math.max(elapsedMs, 1));
+      return {
+        key,
+        title,
+        points: months.map((s, i) => ({ label: label(s), value: values[i], isCurrent: i === 2 })),
+        current: { value: current, prevSameDay, prevFull, pacePct, projection },
+      };
+    };
+
+    const metrics = [
+      await buildMetric('leads', 'Лиды (новые)', countLeads),
+      await buildMetric('deals', 'Новые сделки', countDeals),
+      await buildMetric('sales', 'Продажи', countSales),
+    ];
+
+    return { asOf: now.toISOString(), dayOfMonth: now.getUTCDate(), metrics };
+  }
 }

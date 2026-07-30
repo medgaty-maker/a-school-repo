@@ -11,6 +11,7 @@ import {
 } from 'recharts';
 import { apiFetch } from '@/lib/api-client';
 import { KpiCard } from '@/components/kpi-card';
+import { MonthlyPacingBlock, type MonthlyPacing } from '@/components/widgets/monthly-pacing';
 import { PlatformCard } from '@/components/widgets/platform-card';
 import { DonutChart } from '@/components/widgets/donut-chart';
 import { DemographicsPyramid } from '@/components/widgets/demographics-pyramid';
@@ -239,6 +240,7 @@ function ProjectDetailContent() {
   const [kpiLoading, setKpiLoading] = useState(true);
   const [salesOpen, setSalesOpen] = useState(false);
   const [kabinety, setKabinety] = useState<KabinetySummary | null>(null);
+  const [igPacing, setIgPacing] = useState<MonthlyPacing | null>(null);
 
   const { period, days: periodDays } = usePeriod();
   const periodLabel = PERIODS.find((p) => p.value === period)?.label ?? period;
@@ -270,6 +272,12 @@ function ProjectDetailContent() {
           } catch (e) {
             console.error(e);
           }
+        }
+        const igp = m.platforms.INSTAGRAM as any;
+        if (igp?.status === 'ACTIVE' && igp.projectPlatformId) {
+          apiFetch<MonthlyPacing>(`/integrations/meta/instagram/${igp.projectPlatformId}/monthly-pacing`, { token })
+            .then(setIgPacing)
+            .catch(() => null);
         }
       })
       .catch((e) => setError((e as Error).message));
@@ -478,6 +486,9 @@ function ProjectDetailContent() {
           onMetricChange={setChartMetric}
         />
       </section>
+
+      {/* Instagram — помесячный разрез (просмотры/охват/вовлечённость) с прогнозом */}
+      <MonthlyPacingBlock data={igPacing} title="Instagram · помесячно" />
 
       {/* Карточки платформ */}
       <section>
