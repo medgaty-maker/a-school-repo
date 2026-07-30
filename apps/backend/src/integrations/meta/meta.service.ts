@@ -624,15 +624,22 @@ export class MetaService {
   // Каждое продление даёт ещё +60 дней, поэтому токен не истекает, пока идут синки.
   @Cron(CronExpression.EVERY_DAY_AT_4AM, { name: 'ig-token-refresh' })
   async refreshInstagramTokens(): Promise<{ refreshed: number; failed: number }> {
+    // Берём и ACTIVE, и застрявшие в EXPIRED/ERROR — если токен ещё жив, попытка продления
+    // вернёт их в строй (самолечение), иначе останутся EXPIRED.
     const platforms = await this.prisma.projectPlatform.findMany({
-      where: { platform: Platform.INSTAGRAM, status: IntegrationStatus.ACTIVE, accessTokenEnc: { not: null } },
+      where: {
+        platform: Platform.INSTAGRAM,
+        status: { in: [IntegrationStatus.ACTIVE, IntegrationStatus.EXPIRED, IntegrationStatus.ERROR] },
+        accessTokenEnc: { not: null },
+      },
     });
     let refreshed = 0;
     let failed = 0;
     const soon = Date.now() + 15 * 24 * 3600 * 1000; // продлеваем за 15 дней до конца
     for (const pp of platforms) {
-      // Если срок известен и ещё далеко — пропускаем (Instagram запрещает частое продление)
-      if (pp.tokenExpiresAt && pp.tokenExpiresAt.getTime() > soon) continue;
+      // ACTIVE с далёким сроком — пропускаем (частое продление Instagram запрещает).
+      // EXPIRED/ERROR — всегда пробуем (вдруг токен ещё жив).
+      if (pp.status === IntegrationStatus.ACTIVE && pp.tokenExpiresAt && pp.tokenExpiresAt.getTime() > soon) continue;
       try {
         const token = this.crypto.decrypt(pp.accessTokenEnc!);
         const r = await this.refreshLongLivedToken(token);
@@ -641,6 +648,7 @@ export class MetaService {
           data: {
             accessTokenEnc: this.crypto.encrypt(r.access_token),
             tokenExpiresAt: new Date(Date.now() + (r.expires_in ?? 60 * 24 * 3600) * 1000),
+            status: IntegrationStatus.ACTIVE,
             lastError: null,
           },
         });
