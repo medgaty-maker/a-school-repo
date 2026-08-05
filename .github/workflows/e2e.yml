@@ -81,9 +81,13 @@ jobs:
         working-directory: apps/backend
         run: npx ts-node -r tsconfig-paths/register src/main.ts > backend.log 2>&1 &
 
+      - name: Build frontend
+        working-directory: apps/frontend
+        run: npm run build
+
       - name: Start frontend
         working-directory: apps/frontend
-        run: npm run dev > frontend.log 2>&1 &
+        run: npm run start > frontend.log 2>&1 &
 
       - name: Wait for backend
         run: |
