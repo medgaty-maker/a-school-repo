@@ -1,0 +1,16 @@
+{
+  "name": "@dashboard/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "description": "E2E-тесты (Playwright) для marketing-dashboard",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "test:ui": "playwright test --ui",
+    "report": "playwright show-report playwright-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0"
+  }
+}
