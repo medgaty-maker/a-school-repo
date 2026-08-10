@@ -1,16 +1,18 @@
 import { test, expect } from '@playwright/test';
 
 const API_URL = process.env.API_URL || 'http://localhost:4100';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@a-school.kz';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'changeme123';
 
 test('should login successfully', async ({ request }) => {
   const response = await request.post(`${API_URL}/api/auth/login`, {
-    data: { email: 'admin@a-school.kz', password: 'changeme123' },
+    data: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
   });
   expect(response.status()).toBe(200);
   const responseBody = await response.json();
   expect(responseBody).toHaveProperty('accessToken');
   expect(responseBody).toHaveProperty('user');
-  expect(responseBody.user).toHaveProperty('email', 'admin@a-school.kz');
+  expect(responseBody.user).toHaveProperty('email', ADMIN_EMAIL);
   console.log(responseBody);
 });
 
