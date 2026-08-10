@@ -87,16 +87,28 @@ export class AuthService {
 
   private async issueTokens(userId: string, email: string, role: Role) {
     const payload: JwtPayload = { sub: userId, email, role };
+    // jti (JWT ID) - случайный уникальный идентификатор конкретной выдачи токена.
+    // Без него payload (sub/email/role/iat/exp) может побитово совпасть у двух
+    // токенов, выпущенных одному юзеру в одну и ту же секунду (iat - точность
+    // до секунды) -> одинаковый tokenHash -> нарушение @unique в RefreshSession
+    // -> 500 при конкурентных/близких по времени логинах одним аккаунтом.
+    const jti = crypto.randomUUID();
 
-    const accessToken = await this.jwt.signAsync(payload, {
-      secret: process.env.JWT_SECRET!,
-      expiresIn: process.env.JWT_ACCESS_TTL || '15m',
-    });
+    const accessToken = await this.jwt.signAsync(
+      { ...payload, jti },
+      {
+        secret: process.env.JWT_SECRET!,
+        expiresIn: process.env.JWT_ACCESS_TTL || '15m',
+      },
+    );
 
-    const refreshToken = await this.jwt.signAsync(payload, {
-      secret: process.env.JWT_REFRESH_SECRET!,
-      expiresIn: process.env.JWT_REFRESH_TTL || '7d',
-    });
+    const refreshToken = await this.jwt.signAsync(
+      { ...payload, jti },
+      {
+        secret: process.env.JWT_REFRESH_SECRET!,
+        expiresIn: process.env.JWT_REFRESH_TTL || '7d',
+      },
+    );
 
     return { accessToken, refreshToken };
   }
