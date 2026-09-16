@@ -104,7 +104,12 @@ jobs:
           done
 
       - name: Run Playwright tests
-        run: npx playwright test -c apps/e2e/playwright.config.js
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            npx playwright test -c apps/e2e/playwright.config.js
+          else
+            npx playwright test -c apps/e2e/playwright.config.js --grep @smoke
+          fi
 
       - name: Upload HTML report
         if: always()
